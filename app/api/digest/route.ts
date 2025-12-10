@@ -67,14 +67,22 @@ export async function POST(request: Request) {
 
     const htmlContent = generateEmailHtml(digestData);
 
-    const data = await resend.emails.send({
-      from: 'Daily Pulse <onboarding@resend.dev>', // 这里需要改成您在 Resend 验证过的域名
+    // FIX: 正确解构 Resend 的响应对象
+    // resend.emails.send 返回的是 { data, error } 结构
+    const { data, error } = await resend.emails.send({
+      from: 'Daily Pulse <onboarding@resend.dev>', // 注意：如果未配置自定义域名，只能发给自己
       to: [recipient],
       subject: `Daily Pulse - ${new Date().toLocaleDateString()}`,
       html: htmlContent,
     });
 
-    return NextResponse.json({ success: true, id: data.id });
+    if (error) {
+      console.error('Resend API returned error:', error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    // 成功时，data 中包含 id
+    return NextResponse.json({ success: true, id: data?.id });
 
   } catch (error) {
     console.error('Email sending failed:', error);
