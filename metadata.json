@@ -1,0 +1,5 @@
+{
+  "name": "Daily Pulse - AI Digest",
+  "description": "An automated daily information digest generator powered by Gemini. It aggregates trending social topics and health breakthroughs, translates them, and prepares an email-ready summary.",
+  "requestFramePermissions": []
+}
