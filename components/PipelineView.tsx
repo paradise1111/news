@@ -27,7 +27,7 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
         <div style="${MOCK_EMAIL_STYLES.summaryEn}">${item.summary_en}</div>
         <div style="${MOCK_EMAIL_STYLES.summaryCn}">${item.summary_cn}</div>
         <div>
-          <a href="${item.source_url}" style="${MOCK_EMAIL_STYLES.link}" target="_blank">阅读更多 (${item.source_name}) &rarr;</a>
+          <a href="${item.source_url}" style="${MOCK_EMAIL_STYLES.link}" target="_blank" rel="noopener noreferrer">阅读更多 (${item.source_name}) &rarr;</a>
         </div>
       </div>
     `).join('');
@@ -35,6 +35,10 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
     return `
       <!DOCTYPE html>
       <html>
+      <head>
+        <meta charset="utf-8">
+        <base target="_blank">
+      </head>
       <body style="margin: 0; padding: 0; background-color: #f4f4f5;">
         <div style="${MOCK_EMAIL_STYLES.container}">
           <div style="${MOCK_EMAIL_STYLES.header}">
@@ -173,6 +177,7 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
                       title="Preview"
                       srcDoc={generateHtml(data)}
                       className="w-full h-[600px] border-none"
+                      sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"
                     />
                   </div>
                 ) : (

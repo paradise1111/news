@@ -91,39 +91,44 @@ export const generateDailyDigest = async (
   onLog(`正在初始化模型: ${config.model}...`);
   onLog("连接 Google Search 工具...");
 
-  // Optimized Prompt based on diagnosis:
-  // 1. Avoids direct social media access (Walled Gardens).
-  // 2. Demands substantial content length.
-  // 3. Focuses on third-party analysis.
+  // Optimized Prompt:
+  // 1. Requests exactly 10 items for Social and 10 items for Health.
+  // 2. Enforces strict URL validity to fix broken links.
   const prompt = `
     You are an automated Daily Information Digest agent.
     
     ### Task 1: Social Media & Trends (The "Pulse")
-    - **Goal**: Identify what is truly viral today.
+    - **Goal**: Identify the TOP 10 trending topics/news today.
     - **Search Strategy**: DO NOT try to access x.com (Twitter) or youtube.com directly as they require login. 
-    - **Instead, search for**: "summary of top trending topics on X/Twitter today news reports", "analysis of viral internet trends today", and "tech news summaries today".
+    - **Instead, search for**: "top 10 trending topics on Twitter today summary", "viral YouTube videos today news report", and "tech news summaries today".
     - **Filter**: Ignore minor celebrity gossip. Focus on tech news, major cultural memes, or significant global discussions.
+    - **Quantity**: Provide EXACTLY 10 distinct items.
 
     ### Task 2: Health & Science (The "Breakthroughs")
-    - **Goal**: Find high-impact medical or health news.
-    - **Search Strategy**: Search for "medical breakthroughs last 24h summary" or "significant health study results published today".
+    - **Goal**: Find the TOP 10 high-impact medical or health news.
+    - **Search Strategy**: Search for "top 10 medical breakthroughs last 24h summary" or "significant health study results published today".
     - **Source Check**: Prioritize reputable journals (Nature, Lancet) or major news outlets (BBC Health, CNN Health).
+    - **Quantity**: Provide EXACTLY 10 distinct items.
 
     ### Output Requirements (CRITICAL)
-    1. **Depth**: Do NOT be brief. Each English summary must be **80-100 words**. Explain context, impact, and why it matters.
+    1. **Depth**: Each English summary must be substantial (approx 60-80 words). Explain context, impact, and why it matters.
     2. **Translation**: Provide a fluent, professional Chinese translation of that summary.
-    3. **Format**: Return the result STRICTLY as a JSON object.
+    3. **Links**: The 'source_url' field MUST be a valid, absolute HTTP/HTTPS URL (e.g., "https://www.bbc.com/news/..."). DO NOT generate fake URLs or relative paths. Use the actual URLs found by the Google Search tool.
+    4. **Format**: Return the result STRICTLY as a JSON object.
 
     The JSON structure must be:
     {
       "social": [
-        { "title": "...", "summary_en": "...", "summary_cn": "...", "source_url": "...", "source_name": "..." }
+        { "title": "...", "summary_en": "...", "summary_cn": "...", "source_url": "...", "source_name": "..." },
+        // ... total 10 items
       ],
-      "health": [ ... ]
+      "health": [
+        // ... total 10 items
+      ]
     }
   `;
 
-  onLog("正在执行搜索任务 (查找第三方趋势报告 & 权威医疗资讯)...");
+  onLog("正在执行搜索任务 (目标: 10条热点 + 10条健康资讯)...");
   
   try {
     const response = await ai.models.generateContent({
@@ -175,7 +180,7 @@ export const generateDailyDigest = async (
     if (!data.social) data.social = [];
     if (!data.health) data.health = [];
 
-    onLog("内容生成完成。");
+    onLog(`内容生成完成 (社交: ${data.social.length}条, 健康: ${data.health.length}条)。`);
     return data;
 
   } catch (error) {
