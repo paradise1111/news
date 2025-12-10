@@ -1,10 +1,6 @@
 import { NextResponse } from 'next/server';
 import { Resend } from 'resend';
 
-// 注意：你需要先运行 `npm install resend`
-// 并在 .env.local 中配置 RESEND_API_KEY
-const resend = new Resend(process.env.RESEND_API_KEY);
-
 // 复用常量样式 (为了后端独立性，这里重新定义一遍，或者您可以从 @/constants 导入)
 const EMAIL_STYLES = {
   container: "font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f5;",
@@ -58,6 +54,17 @@ const generateEmailHtml = (data: any) => {
 
 export async function POST(request: Request) {
   try {
+    // 移动初始化逻辑到 Handler 内部
+    // 防止在构建阶段因缺少环境变量而报错
+    const resendApiKey = process.env.RESEND_API_KEY;
+    
+    if (!resendApiKey) {
+      console.error('Missing RESEND_API_KEY environment variable');
+      return NextResponse.json({ error: 'Server configuration error: Missing Resend API Key' }, { status: 500 });
+    }
+
+    const resend = new Resend(resendApiKey);
+
     const body = await request.json();
     const { recipient, digestData } = body;
 
@@ -67,8 +74,6 @@ export async function POST(request: Request) {
 
     const htmlContent = generateEmailHtml(digestData);
 
-    // FIX: 正确解构 Resend 的响应对象
-    // resend.emails.send 返回的是 { data, error } 结构
     const { data, error } = await resend.emails.send({
       from: 'Daily Pulse <onboarding@resend.dev>', // 注意：如果未配置自定义域名，只能发给自己
       to: [recipient],
@@ -81,7 +86,6 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    // 成功时，data 中包含 id
     return NextResponse.json({ success: true, id: data?.id });
 
   } catch (error) {
