@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useState } from 'react';
 import ConfigPanel from './components/ConfigPanel';
 import PipelineView from './components/PipelineView';
