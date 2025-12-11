@@ -1,20 +1,13 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { AppConfig, DigestData } from "../types";
 import { DEFAULT_MODELS } from "../constants";
 
 // Helper to create a client with dynamic configuration
 const createClient = (config: { apiKey: string; baseUrl?: string }) => {
-  // Cast options to any to allow custom baseUrl which might not be in the strict type definition
-  // This is necessary because the official TS types might not expose baseUrl/rootUrl despite the SDK supporting it.
-  const options: any = {
-    apiKey: config.apiKey
-  };
-  
-  if (config.baseUrl) {
-    options.baseUrl = config.baseUrl;
-  }
-
-  return new GoogleGenAI(options);
+  return new GoogleGenAI({ 
+    apiKey: config.apiKey,
+    baseUrl: config.baseUrl || undefined
+  });
 };
 
 export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Promise<{id: string, name: string}[]> => {

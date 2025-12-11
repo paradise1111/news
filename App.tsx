@@ -23,28 +23,21 @@ const App: React.FC = () => {
     addLog("配置已加载。成功连接到 Gemini API。", 'success');
   };
 
-  const handleTriggerPipeline = async (recipients: string[]) => {
+  const handleTriggerPipeline = async (targetEmail: string) => {
     if (!config) return;
 
     setStatus(AppStatus.PROCESSING);
     setLogs([]); // Clear previous logs
     addLog("任务已手动触发。", 'info');
-    
-    // 如果已有数据，则跳过生成步骤直接发送（重新发送逻辑）
-    let data = digestData;
 
     try {
-      if (!data) {
-        // Step 1: Generate Data (The "Brain")
-        data = await generateDailyDigest(config, (msg) => addLog(msg, 'info'));
-        setDigestData(data);
-        addLog("任务完成，预览就绪。", 'success');
-      } else {
-        addLog("使用已生成的日报内容...", 'info');
-      }
+      // Step 1: Generate Data (The "Brain")
+      const data = await generateDailyDigest(config, (msg) => addLog(msg, 'info'));
+      setDigestData(data);
+      addLog("任务完成，预览就绪。", 'success');
       
       // Step 2: Delivery (Real Backend vs Simulation)
-      addLog(`准备推送邮件至 ${recipients.length} 位收件人: ${recipients.join(', ')}`, 'info');
+      addLog(`准备推送邮件至: ${targetEmail}`, 'info');
 
       try {
         // 尝试调用真实的后端 API
@@ -57,7 +50,7 @@ const App: React.FC = () => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            recipients: recipients, // Pass array of recipients
+            recipient: targetEmail,
             digestData: data, // 发送原始数据，让后端生成 HTML
           }),
         });
@@ -67,25 +60,24 @@ const App: React.FC = () => {
            addLog(`后端发送成功! ID: ${resData.id}`, 'success');
         } else {
            // 如果 API 返回 404 (未部署) 或 500 (配置错误)，抛出异常进入模拟流程
-           const errData = await response.json().catch(() => ({}));
-           throw new Error(`API 响应错误: ${response.status} ${errData.error || ''}`);
+           throw new Error(`API 响应错误: ${response.status}`);
         }
 
-      } catch (backendError: any) {
-        console.warn("Backend API unavailable or failed, falling back to simulation.", backendError);
+      } catch (backendError) {
+        console.warn("Backend API unavailable, falling back to simulation.", backendError);
         // --- 降级方案：模拟演示 ---
-        addLog(`注意：后端 API 连接失败 (${backendError.message})`, 'error');
-        addLog("进入模拟模式 (仅前端演示)...", 'info');
+        addLog("注意：后端 API 未连接或报错 (演示模式)", 'error');
+        addLog("正在模拟发送过程...", 'info');
         
         await new Promise(resolve => setTimeout(resolve, 1000));
         
         const mockPayload = {
-          recipients: recipients,
+          recipient: targetEmail,
           subject: `Daily Pulse - ${new Date().toLocaleDateString()}`,
           content_json_length: JSON.stringify(data).length
         };
         console.log(">>> [MOCK] WOULD POST TO /api/digest:", mockPayload);
-        addLog(`(模拟) 邮件已送达 Resend 网关，目标: ${recipients.length} 人`, 'success');
+        addLog("(模拟) 邮件已送达 Resend 网关 [200 OK]", 'success');
       }
       
       setStatus(AppStatus.COMPLETE);
