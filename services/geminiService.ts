@@ -27,14 +27,17 @@ const openAIFetch = async (
 
   console.log(`[Proxy Request] -> ${method} ${targetUrl}`);
 
-  // 使用我们刚刚创建的本地 Next.js 代理 (/api/proxy)
-  // 这可以解决浏览器直接请求第三方 API 时的 CORS (NetworkError) 问题
+  // 使用 AbortController 设置明确的超时
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 90000); // 90秒超时
+
   try {
     const response = await fetch('/api/proxy', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
+      signal: controller.signal,
       body: JSON.stringify({
         url: targetUrl,
         method,
@@ -47,16 +50,37 @@ const openAIFetch = async (
       }),
     });
 
+    clearTimeout(timeoutId);
+
     if (!response.ok) {
        // 尝试解析错误信息
-       const errorJson = await response.json().catch(() => ({ error: response.statusText }));
-       // 如果是 500 且包含 "Proxy Connection Failed"，说明连不上代理地址
-       throw new Error(errorJson.error || `HTTP ${response.status}`);
+       const errorText = await response.text();
+       let errorJson;
+       try {
+           errorJson = JSON.parse(errorText);
+       } catch {
+           errorJson = { error: errorText || response.statusText };
+       }
+       
+       throw new Error(`Proxy Error (${response.status}): ${errorJson.error || JSON.stringify(errorJson)}`);
     }
 
     return await response.json();
   } catch (error: any) {
-      console.error("Fetch Error:", error);
+      clearTimeout(timeoutId);
+      
+      // 区分超时、网络错误和普通错误
+      if (error.name === 'AbortError') {
+          console.error("Fetch Timeout:", targetUrl);
+          throw new Error("请求超时 (90秒)。模型生成内容过长或上游响应过慢。");
+      }
+      
+      if (error.message && error.message.includes("NetworkError")) {
+          console.error("Network Error - Proxy Unreachable");
+          throw new Error("网络错误: 无法连接到内部代理 (/api/proxy)。可能原因：1.本地开发服务器未启动 API 路由; 2.网络断开; 3.BaseURL 配置错误导致后端 DNS 解析失败。");
+      }
+      
+      console.error("Fetch Error Detail:", error);
       throw error;
   }
 };
