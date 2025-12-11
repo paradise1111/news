@@ -14,7 +14,7 @@ const normalizeBaseUrl = (url: string): string => {
   return cleaned;
 };
 
-// Generic Fetcher for OpenAI-Compatible APIs via Internal Proxy
+// Generic Fetcher for OpenAI-Compatible APIs via Universal Edge Proxy
 const openAIFetch = async (
   baseUrl: string,
   apiKey: string,
@@ -32,6 +32,7 @@ const openAIFetch = async (
   const timeoutId = setTimeout(() => controller.abort(), 90000); // 90秒超时
 
   try {
+    // 这里的结构必须匹配 app/api/proxy/route.ts 的要求
     const response = await fetch('/api/proxy', {
       method: 'POST',
       headers: {
@@ -39,7 +40,7 @@ const openAIFetch = async (
       },
       signal: controller.signal,
       body: JSON.stringify({
-        url: targetUrl,
+        targetUrl: targetUrl, // 注意：参数名改为 targetUrl 以匹配通用代理脚本
         method,
         // 将 Headers 传递给服务端代理，由服务端带上
         headers: {
@@ -77,7 +78,7 @@ const openAIFetch = async (
       
       if (error.message && error.message.includes("NetworkError")) {
           console.error("Network Error - Proxy Unreachable");
-          throw new Error("网络错误: 无法连接到内部代理 (/api/proxy)。可能原因：1.本地开发服务器未启动 API 路由; 2.网络断开; 3.BaseURL 配置错误导致后端 DNS 解析失败。");
+          throw new Error("网络错误: 无法连接到内部代理 (/api/proxy)。请检查 Vercel 部署状态。");
       }
       
       console.error("Fetch Error Detail:", error);
@@ -135,7 +136,7 @@ export const generateDailyDigest = async (
   config: AppConfig, 
   onLog: (msg: string) => void
 ): Promise<DigestData> => {
-  onLog(`正在初始化 (API 模式: OpenAI 兼容 / 代理中转, 模型: ${config.model})...`);
+  onLog(`正在初始化 (API 模式: OpenAI 兼容 / 边缘代理, 模型: ${config.model})...`);
 
   const prompt = `
     You are an automated Daily Information Digest agent.
@@ -187,7 +188,7 @@ export const generateDailyDigest = async (
     
     // First attempt with JSON mode
     try {
-        onLog("发送请求中 (通过服务端代理)...");
+        onLog("发送请求中 (通过 Edge 代理)...");
         responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
     } catch(err: any) {
         // If the provider doesn't support response_format (400 Bad Request), retry without it

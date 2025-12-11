@@ -1,47 +1,67 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
-export async function POST(req: Request) {
+// 使用 Edge Runtime，速度更快，且支持标准的 Web Fetch API
+export const runtime = 'edge';
+
+// 处理预检请求 (CORS)
+export async function OPTIONS() {
+  return new NextResponse(null, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    },
+  });
+}
+
+export async function POST(req: NextRequest) {
   try {
-    // 1. 解析前端传来的请求参数
-    const { url, method, headers, body } = await req.json();
-
-    if (!url) {
-      return NextResponse.json({ error: "Missing URL parameter" }, { status: 400 });
+    // 1. 解析前端传来的数据
+    const bodyText = await req.text();
+    let payload;
+    try {
+        payload = JSON.parse(bodyText);
+    } catch {
+        return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
-    // 2. 由 Next.js 服务端发起实际请求 (服务端无 CORS 限制)
-    console.log(`[Server Proxy] Forwarding ${method} request to: ${url}`);
-    
-    const upstreamResponse = await fetch(url, {
+    const { targetUrl, method, headers, body } = payload;
+
+    if (!targetUrl) {
+      return NextResponse.json({ error: 'Missing target URL parameter' }, { status: 400 });
+    }
+
+    console.log(`[Edge Proxy] ${method || 'GET'} -> ${targetUrl}`);
+
+    // 2. 服务器端发起请求 (支持 HTTP 和 HTTPS)
+    // Edge Runtime 的 fetch API 更加健壮
+    const upstreamResponse = await fetch(targetUrl, {
       method: method || 'GET',
       headers: headers || {},
       body: body ? JSON.stringify(body) : undefined,
     });
 
-    // 3. 读取上游响应
-    const textData = await upstreamResponse.text();
-    
-    let jsonData;
-    try {
-        jsonData = JSON.parse(textData);
-    } catch (e) {
-        // 如果返回的不是 JSON (比如 HTML 错误页)，则保留文本
-        jsonData = null;
-    }
+    // 3. 获取结果 (先拿文本，防止 JSON 解析挂掉)
+    const data = await upstreamResponse.text();
 
-    // 4. 将上游的状态码和数据原样返回给前端
-    if (!upstreamResponse.ok) {
-        console.error(`[Server Proxy Error] ${upstreamResponse.status} from upstream.`);
-        return NextResponse.json(
-            jsonData || { error: textData || upstreamResponse.statusText }, 
-            { status: upstreamResponse.status }
-        );
-    }
-
-    return NextResponse.json(jsonData || { data: textData });
+    // 4. 返回给前端
+    return new NextResponse(data, {
+      status: upstreamResponse.status,
+      headers: {
+        'Content-Type': 'application/json',
+        'Access-Control-Allow-Origin': '*', // 再次确保前端能收到
+      },
+    });
 
   } catch (error: any) {
-    console.error("[Server Proxy Internal Error]", error);
-    return NextResponse.json({ error: `Proxy Connection Failed: ${error.message}` }, { status: 500 });
+    console.error("[Edge Proxy Error]", error);
+    return NextResponse.json(
+        { error: 'Proxy Request Failed: ' + error.message }, 
+        { 
+            status: 500,
+            headers: { 'Access-Control-Allow-Origin': '*' }
+        }
+    );
   }
 }
