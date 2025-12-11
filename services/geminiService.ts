@@ -79,30 +79,37 @@ const openAIFetch = async (
             buffer = lines.pop() || '';
 
             for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    // 代理发送的数据是 JSON.stringify 过的字符串，所以需要解析一次得到原始 JSON 字符串
-                    try {
-                        const rawSegment = JSON.parse(line.substring(6));
-                        finalJsonString += rawSegment;
-                    } catch (e) {
-                        console.warn("Parse warning on SSE chunk:", line);
-                    }
-                } else if (line.startsWith('event: error')) {
+                const trimmedLine = line.trim();
+                if (!trimmedLine) continue;
+
+                if (trimmedLine.startsWith('event: error')) {
                     hasError = true;
-                } else if (hasError && line.startsWith('data: ')) {
-                    // 如果前一行是 event: error，这一行就是错误详情
-                    try {
-                        const errObj = JSON.parse(line.substring(6));
-                        errorMessage = errObj.error || "Proxy Upstream Error";
-                    } catch {
-                        errorMessage = line.substring(6);
+                } else if (trimmedLine.startsWith('data: ')) {
+                    const dataContent = trimmedLine.substring(6);
+                    
+                    if (hasError) {
+                        // 如果前一行是 event: error，这一行就是错误详情
+                        try {
+                            const errObj = JSON.parse(dataContent);
+                            errorMessage = errObj.error || "Proxy Upstream Error";
+                        } catch {
+                            errorMessage = dataContent;
+                        }
+                    } else {
+                         // 正常数据
+                        try {
+                            const rawSegment = JSON.parse(dataContent);
+                            finalJsonString += rawSegment;
+                        } catch (e) {
+                            console.warn("Parse warning on SSE chunk:", trimmedLine);
+                        }
                     }
                 }
             }
         }
 
         if (hasError || errorMessage) {
-            throw new Error(errorMessage || "Stream Error");
+            throw new Error(errorMessage || "Stream Error (Unknown)");
         }
         
         if (!finalJsonString) {
@@ -236,12 +243,15 @@ export const generateDailyDigest = async (
         onLog("发送请求中 (已启用 Google Search 联网)...");
         responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
     } catch(err: any) {
-        if (err.message.includes("tool") || err.message.includes("googleSearch") || err.message.includes("400")) {
-             onLog("警告: 当前 API 渠道似乎不支持 Google Search 工具，正在尝试降级 (可能导致无真实链接)...");
+        // Enhance error message visibility
+        const errorMsg = err.message || '';
+        
+        if (errorMsg.includes("tool") || errorMsg.includes("googleSearch") || errorMsg.includes("400")) {
+             onLog(`警告: 当前模型/渠道不支持 Google Search (${errorMsg})，正在尝试降级...`);
              delete payload.tools;
              responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
         }
-        else if (err.message.includes("response_format")) {
+        else if (errorMsg.includes("response_format")) {
             onLog("API 不支持 strict JSON 模式，正在降级重试...");
             delete payload.response_format;
             responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
