@@ -9,8 +9,7 @@ const createClient = (config: { apiKey: string; baseUrl?: string }) => {
   };
   
   if (config.baseUrl) {
-    // Clean the Base URL: remove trailing slashes to avoid double-slashing in SDK path construction
-    // Many proxies expect the root, e.g. https://api.proxy.com, and SDK appends /v1beta/models
+    // Clean the Base URL: remove trailing slashes
     options.baseUrl = config.baseUrl.replace(/\/+$/, '');
   }
 
@@ -24,11 +23,9 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
     console.log("Attempting to fetch models from:", baseUrl || "Default Google Endpoint");
     
     // Attempt to list models
-    // We cast to any to handle potential missing type definitions in the environment
     const response: any = await ai.models.list();
     
     if (response && response.models) {
-      // Filter only for models that support content generation
       const models = response.models
         .filter((m: any) => 
           m.supportedGenerationMethods?.includes('generateContent')
@@ -41,7 +38,7 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
           };
         });
 
-      // Sort models: Flash and Pro versions first
+      // Sort models
       models.sort((a: any, b: any) => {
         const score = (str: string) => {
           const s = str.toLowerCase();
@@ -52,44 +49,19 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
         return score(b.id) - score(a.id);
       });
 
-      console.log(`Successfully fetched ${models.length} models from API.`);
+      console.log(`Successfully fetched ${models.length} models.`);
       return models.length > 0 ? models : DEFAULT_MODELS;
     }
     
-    throw new Error("Invalid response structure from Model List API");
+    throw new Error("Empty model list");
 
   } catch (listError: any) {
-    console.warn("Model listing failed, attempting fallback verification:", listError.message);
+    // CRITICAL CHANGE: As requested, if listing fails (common with proxies), 
+    // we simply return the default list and allow the user to proceed.
+    // We do NOT throw an error here, letting the user try 'generateContent' later.
+    console.warn("Model listing failed or not supported by proxy. Using default model list.", listError.message);
     
-    // Fallback: Verify key by generating a single token with standard models
-    // Extended list to support various "New API" / Proxy configurations that might map specific model names
-    const fallbackModels = [
-        'gemini-2.5-flash', 
-        'gemini-1.5-flash', 
-        'gemini-1.5-pro',
-        'gemini-pro',
-        'gemini-flash'
-    ];
-    
-    let lastError = null;
-    
-    for (const model of fallbackModels) {
-        try {
-            console.log(`Fallback: Verifying with ${model}...`);
-            await ai.models.generateContent({
-                model: model,
-                contents: { parts: [{ text: 'Ping' }] },
-            });
-            console.log("Fallback verification successful using " + model);
-            return DEFAULT_MODELS;
-        } catch (verifyError: any) {
-            console.warn(`Verification failed for ${model}:`, verifyError.message);
-            lastError = verifyError;
-        }
-    }
-    
-    const errorDetails = lastError ? `Details: ${lastError.message}` : 'Check console for logs.';
-    throw new Error(`无法连接到 API。已尝试多种模型均失败。请检查 Base URL 格式是否正确 (通常不需要 /v1 后缀) 以及 API Key 是否有效。 ${errorDetails}`);
+    return DEFAULT_MODELS;
   }
 };
 

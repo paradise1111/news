@@ -1,8 +1,10 @@
 export const DEFAULT_MODELS = [
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Recommended)' },
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
   { id: 'gemini-2.5-flash-lite-latest', name: 'Gemini 2.5 Flash Lite' },
   { id: 'gemini-3-pro-preview', name: 'Gemini 3.0 Pro' },
-  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (Legacy)' },
+  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
+  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash' },
+  { id: 'gemini-pro', name: 'Gemini Pro (Legacy)' },
 ];
 
 export const MOCK_EMAIL_STYLES = {

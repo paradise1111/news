@@ -45,25 +45,25 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
     setError(null);
 
     try {
+      // Use defaults if fetch fails (logic inside service)
       const models = await verifyAndFetchModels(apiKey, baseUrl);
       
-      // Save valid config
+      // Save config to local storage
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ apiKey, baseUrl }));
 
       setAvailableModels(models);
-      // Default to the first available model, preferably flash
+      // Default to the first available model if not already set
       if (models.length > 0) {
         setModel(models[0].id);
       }
       setStep('model');
     } catch (err: any) {
-      console.error("Connection error details:", err);
-      // Handle complex error objects (like JSON responses)
-      const message = err instanceof Error 
-        ? err.message 
-        : (typeof err === 'object' ? JSON.stringify(err) : String(err));
-      
-      setError(message || "Connection failed. Please check your API Key and Network.");
+      // Even if it throws (unlikely with new service logic), we fallback
+      console.warn("Connection warning:", err);
+      setAvailableModels(DEFAULT_MODELS);
+      setModel(DEFAULT_MODELS[0].id);
+      setStep('model');
+      setError("无法验证 API Key，但已启用离线模式。如果 Key 无效，任务将失败。");
     } finally {
       setIsValidating(false);
     }
@@ -72,7 +72,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
   const handleStart = (e: React.FormEvent) => {
     e.preventDefault();
     if (!model) {
-      setError("Please select a model.");
+      setError("Please enter or select a model.");
       return;
     }
     const config: AppConfig = { apiKey, baseUrl, model };
@@ -134,38 +134,35 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                正在验证...
+                正在连接...
               </span>
-            ) : '连接'}
+            ) : '下一步'}
           </button>
         </form>
       ) : (
         <form onSubmit={handleStart} className="space-y-6 animate-fadeIn">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              选择模型
+              模型名称
             </label>
             <div className="relative">
-              <select
+              {/* 使用 input + datalist 实现可编辑的下拉框 */}
+              <input
+                list="model-options"
+                type="text"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none appearance-none bg-white"
-              >
+                placeholder="输入或选择模型..."
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+              />
+              <datalist id="model-options">
                 {availableModels.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
+                  <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
-              </select>
-              <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
-                <svg className="fill-current h-4 w-4" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20">
-                  <path d="M9.293 12.95l.707.707L15.657 8l-1.414-1.414L10 10.828 5.757 6.586 4.343 8z"/>
-                </svg>
-              </div>
+              </datalist>
             </div>
-            <p className="text-xs text-green-600 mt-2 flex items-center">
-              <svg className="w-3 h-3 mr-1" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd"/></svg>
-              连接成功 (已加载 {availableModels.length} 个模型)
+            <p className="text-xs text-gray-500 mt-2">
+              提示: 您可以直接输入自定义模型 ID (如中转 API 需要特定映射名)。
             </p>
           </div>
 
@@ -188,9 +185,9 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
       )}
 
       {error && (
-        <div className="mt-6 p-3 bg-red-50 text-red-700 text-sm rounded-lg flex items-center animate-shake break-all">
+        <div className="mt-6 p-3 bg-yellow-50 text-yellow-800 border border-yellow-200 text-sm rounded-lg flex items-center animate-shake break-all">
           <svg className="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
           </svg>
           {error}
         </div>
