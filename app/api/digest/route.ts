@@ -54,13 +54,15 @@ const generateEmailHtml = (data: any) => {
 
 export async function POST(request: Request) {
   try {
-    // 移动初始化逻辑到 Handler 内部
-    // 防止在构建阶段因缺少环境变量而报错
+    // 检查环境变量
     const resendApiKey = process.env.RESEND_API_KEY;
     
     if (!resendApiKey) {
       console.error('Missing RESEND_API_KEY environment variable');
-      return NextResponse.json({ error: 'Server configuration error: Missing Resend API Key' }, { status: 500 });
+      // 返回明确的错误信息，告知前端是因为缺 Key
+      return NextResponse.json({ 
+          error: 'Missing RESEND_API_KEY. Please add it to your Vercel Environment Variables.' 
+      }, { status: 500 });
     }
 
     const resend = new Resend(resendApiKey);
@@ -88,8 +90,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, id: data?.id });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('Email sending failed:', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
   }
 }

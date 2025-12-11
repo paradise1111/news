@@ -138,23 +138,28 @@ export const generateDailyDigest = async (
 ): Promise<DigestData> => {
   onLog(`正在初始化 (API 模式: OpenAI 兼容 / 边缘代理, 模型: ${config.model})...`);
 
+  // Prompt updated to enforce using the search tool
   const prompt = `
     You are an automated Daily Information Digest agent.
     
+    CRITICAL INSTRUCTION:
+    You MUST use the provided 'googleSearch' tool to find REAL, CURRENT information.
+    Do NOT hallucinate or make up news. If you cannot find a link using the tool, do not include the item.
+    
     ### Task 1: Social Media & Trends (The "Pulse")
-    - **Goal**: Identify the TOP 10 trending topics/news today.
+    - **Goal**: Identify the TOP 10 trending topics/news today using Google Search.
     - **Filter**: Ignore minor celebrity gossip. Focus on tech news, major cultural memes, or significant global discussions.
     - **Quantity**: Provide EXACTLY 10 distinct items.
 
     ### Task 2: Health & Science (The "Breakthroughs")
-    - **Goal**: Find the TOP 10 high-impact medical or health news.
-    - **Source Check**: Prioritize reputable journals (Nature, Lancet) or major news outlets.
+    - **Goal**: Find the TOP 10 high-impact medical or health news from reputable sources using Google Search.
     - **Quantity**: Provide EXACTLY 10 distinct items.
 
     ### Output Requirements (CRITICAL)
     1. **Depth**: Each English summary must be substantial (approx 60-80 words). Explain context, impact, and why it matters.
     2. **Translation**: Provide a fluent, professional Chinese translation of that summary.
-    3. **Format**: Return the result STRICTLY as a JSON object. No Markdown code blocks if possible, just raw JSON.
+    3. **Source**: You MUST provide the REAL URL (source_url) found via the search tool.
+    4. **Format**: Return the result STRICTLY as a JSON object. No Markdown code blocks if possible, just raw JSON.
 
     The JSON structure must be:
     {
@@ -172,12 +177,17 @@ export const generateDailyDigest = async (
     messages: [
       { 
           role: "system", 
-          content: "You are a professional news analyst. Output valid JSON only." 
+          content: "You are a professional news analyst. You have access to Google Search. You must output valid JSON." 
       },
       { 
           role: "user", 
           content: prompt 
       }
+    ],
+    // Enable Google Search Grounding
+    // Note: This specific format { googleSearch: {} } is supported by Gemini APIs and many proxies.
+    tools: [
+        { googleSearch: {} }
     ],
     // Some providers support JSON mode to guarantee valid JSON
     response_format: { type: "json_object" }
@@ -186,13 +196,19 @@ export const generateDailyDigest = async (
   try {
     let responseData;
     
-    // First attempt with JSON mode
+    // First attempt with JSON mode and Tools
     try {
-        onLog("发送请求中 (通过 Edge 代理)...");
+        onLog("发送请求中 (已启用 Google Search 联网)...");
         responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
     } catch(err: any) {
-        // If the provider doesn't support response_format (400 Bad Request), retry without it
-        if (err.message.includes("response_format") || err.message.includes("400") || err.message.includes("not supported")) {
+        // Fallback 1: If tools/googleSearch causes error (400), try removing tools but keep JSON mode
+        if (err.message.includes("tool") || err.message.includes("googleSearch") || err.message.includes("400")) {
+             onLog("警告: 当前 API 渠道似乎不支持 Google Search 工具，正在尝试降级 (可能导致无真实链接)...");
+             delete payload.tools;
+             responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
+        }
+        // Fallback 2: If response_format causes error
+        else if (err.message.includes("response_format")) {
             onLog("API 不支持 strict JSON 模式，正在降级重试...");
             delete payload.response_format;
             responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
