@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AppConfig, AppStatus, ModelOption } from '../types';
 import { DEFAULT_MODELS } from '../constants';
 import { verifyAndFetchModels, checkModelAvailability } from '../services/geminiService';
@@ -21,6 +21,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
   const [isTesting, setIsTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
+  
+  const listRef = useRef<HTMLDivElement>(null);
 
   // Load saved config on mount
   useEffect(() => {
@@ -51,16 +53,18 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
       
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ apiKey, baseUrl }));
 
-      setAvailableModels(models);
-      // Default to the first model if not set
-      if (models.length > 0 && !model) {
-        setModel(models[0].id);
+      // If we got a real list from API, use it. Otherwise use our expanded DEFAULT_MODELS for manual testing.
+      const modelsToUse = models.length > 0 ? models : DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption));
+      
+      setAvailableModels(modelsToUse);
+      
+      if (modelsToUse.length > 0 && !model) {
+        setModel(modelsToUse[0].id);
       } else if (!model) {
         setModel(DEFAULT_MODELS[0].id);
       }
       setStep('model');
     } catch (err: any) {
-      // Should rarely reach here due to service fallback, but just in case
       console.warn("Connection warning:", err);
       setAvailableModels(DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption)));
       setModel(DEFAULT_MODELS[0].id);
@@ -88,12 +92,29 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
 
   const handleTestAllModels = async () => {
     setIsTesting(true);
+    setTestResult(null);
+    setError(null);
     const updatedModels = [...availableModels];
+    let successCount = 0;
     
+    // Reset statuses first
+    for(let i=0; i<updatedModels.length; i++) {
+        updatedModels[i].status = 'unknown';
+    }
+    setAvailableModels([...updatedModels]);
+
     for (let i = 0; i < updatedModels.length; i++) {
       updatedModels[i] = { ...updatedModels[i], status: 'testing' };
       setAvailableModels([...updatedModels]);
       
+      // Auto scroll to current item
+      if (listRef.current) {
+         const element = listRef.current.children[i+1] as HTMLElement; // +1 for the label p tag
+         if (element) {
+             element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+         }
+      }
+
       const result = await checkModelAvailability(apiKey, baseUrl, updatedModels[i].id);
       
       updatedModels[i] = { 
@@ -101,9 +122,27 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
         status: result.available ? 'available' : 'unavailable',
         latency: result.latency
       };
+      
+      if (result.available) {
+          successCount++;
+          // If the currently selected model is invalid, auto-switch to this valid one
+          if (!successCount || model === '') {
+              setModel(updatedModels[i].id);
+          }
+      }
+      
       setAvailableModels([...updatedModels]);
+      
+      // Small delay to prevent rate limits from being hit instantly if the proxy is sensitive
+      await new Promise(r => setTimeout(r, 200));
     }
+    
     setIsTesting(false);
+    if (successCount === 0) {
+        setError("所有模型测试均失败。请检查 API Key 是否有效，或 Base URL 是否正确。");
+    } else {
+        setTestResult(`测试完成。共发现 ${successCount} 个可用模型。`);
+    }
   };
 
   const handleStart = (e: React.FormEvent) => {
@@ -123,16 +162,16 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
   };
 
   return (
-    <div className="max-w-xl w-full bg-white rounded-xl shadow-2xl p-8 border border-gray-100 relative overflow-hidden">
-      <div className="text-center mb-8">
+    <div className="max-w-xl w-full bg-white rounded-xl shadow-2xl p-8 border border-gray-100 relative overflow-hidden flex flex-col max-h-[90vh]">
+      <div className="text-center mb-6 shrink-0">
         <h2 className="text-2xl font-bold text-gray-800">Daily Pulse Setup</h2>
         <p className="text-gray-500 text-sm mt-2">
-          {step === 'credentials' ? '连接 Gemini API' : '选择 & 测试模型'}
+          {step === 'credentials' ? '连接 Gemini API' : '模型连通性测试'}
         </p>
       </div>
 
       {step === 'credentials' ? (
-        <form onSubmit={handleConnect} className="space-y-6 animate-fadeIn">
+        <form onSubmit={handleConnect} className="space-y-6 animate-fadeIn overflow-y-auto p-1">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Gemini API Key
@@ -170,20 +209,12 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
           </button>
         </form>
       ) : (
-        <div className="space-y-6 animate-fadeIn">
-          <div>
+        <div className="space-y-4 animate-fadeIn flex flex-col min-h-0 flex-1">
+          <div className="shrink-0">
             <div className="flex justify-between items-center mb-1">
                <label className="block text-sm font-medium text-gray-700">
-                模型选择
+                当前选择模型
               </label>
-              <button 
-                type="button"
-                onClick={handleTestAllModels}
-                disabled={isTesting}
-                className="text-xs text-indigo-600 hover:text-indigo-800 font-medium underline disabled:opacity-50"
-              >
-                {isTesting ? '正在检测...' : '🔎 全量检测可用性'}
-              </button>
             </div>
            
             <div className="relative flex gap-2">
@@ -201,7 +232,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
                 disabled={isTesting || !model}
                 className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium text-sm transition-colors border border-gray-200 whitespace-nowrap"
               >
-                {isTesting ? '...' : '测试连接'}
+                {isTesting ? '...' : '测试单个'}
               </button>
             </div>
             <datalist id="model-options">
@@ -209,58 +240,80 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
                 <option key={m.id} value={m.id}>{m.name}</option>
               ))}
             </datalist>
+          </div>
+          
+          <div className="flex items-center justify-between shrink-0">
+             <span className="text-xs text-gray-500">建议先点击右侧按钮测试所有模型 &rarr;</span>
+             <button 
+                type="button"
+                onClick={handleTestAllModels}
+                disabled={isTesting}
+                className={`text-xs px-3 py-1 rounded-full border transition-all ${isTesting ? 'bg-gray-100 text-gray-400' : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'}`}
+              >
+                {isTesting ? '正在全量扫描中...' : '🔎 开始全量扫描 (Test All)'}
+              </button>
+          </div>
 
-            {/* Models Status List */}
-            <div className="mt-4 max-h-48 overflow-y-auto border border-gray-100 rounded-lg bg-gray-50 p-2 text-xs">
-                <p className="text-gray-400 mb-2 px-2">可用模型列表 (点击上方“全量检测”更新状态):</p>
+          {/* Models Status List */}
+          <div ref={listRef} className="flex-1 min-h-[150px] overflow-y-auto border border-gray-100 rounded-lg bg-gray-50 p-2 text-xs">
+                <p className="text-gray-400 mb-2 px-2 sticky top-0 bg-gray-50 pb-1 border-b border-gray-100">
+                    可用模型列表 ({availableModels.length}个):
+                </p>
                 {availableModels.map((m) => (
                     <div 
                         key={m.id} 
                         onClick={() => setModel(m.id)}
-                        className={`flex items-center justify-between p-2 rounded cursor-pointer hover:bg-white transition-colors ${model === m.id ? 'bg-blue-50 border border-blue-100' : ''}`}
+                        className={`flex items-center justify-between p-2 rounded cursor-pointer border border-transparent hover:bg-white hover:shadow-sm transition-all mb-1
+                            ${model === m.id ? 'bg-blue-50 border-blue-200 ring-1 ring-blue-100' : ''}
+                            ${m.status === 'unavailable' ? 'opacity-60 grayscale' : ''}
+                        `}
                     >
-                        <span className="font-medium truncate mr-2">{m.name || m.id}</span>
-                        <div className="flex items-center gap-2 shrink-0">
-                            {m.status === 'testing' && <span className="animate-spin w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full"></span>}
-                            {m.status === 'available' && <span className="text-green-600 flex items-center gap-1">✅ <span className="text-[10px] opacity-70">{m.latency}ms</span></span>}
-                            {m.status === 'unavailable' && <span className="text-red-500">❌</span>}
-                            {m.status === 'unknown' && <span className="text-gray-300">⚪</span>}
+                        <div className="flex flex-col overflow-hidden">
+                             <span className={`font-medium truncate ${m.status === 'available' ? 'text-gray-900' : 'text-gray-500'}`}>{m.name}</span>
+                             <span className="text-[10px] text-gray-400 font-mono truncate">{m.id}</span>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0 pl-2">
+                            {m.status === 'testing' && <span className="animate-spin w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full"></span>}
+                            {m.status === 'available' && <span className="text-green-600 bg-green-50 px-2 py-0.5 rounded-full border border-green-100 flex items-center gap-1">OK <span className="text-[9px] opacity-70">| {m.latency}ms</span></span>}
+                            {m.status === 'unavailable' && <span className="text-red-500 bg-red-50 px-2 py-0.5 rounded-full border border-red-100">Fail</span>}
+                            {m.status === 'unknown' && <span className="text-gray-300 px-2">Wait</span>}
                         </div>
                     </div>
                 ))}
-            </div>
           </div>
 
           {/* Messages */}
-          {testResult && (
-            <div className="p-3 bg-green-50 text-green-700 border border-green-200 text-sm rounded-lg flex items-center">
-               <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-               {testResult}
-            </div>
-          )}
-          
-          {error && (
-            <div className="p-3 bg-red-50 text-red-700 border border-red-200 text-sm rounded-lg flex items-center break-all">
-              <svg className="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-              {error}
-            </div>
-          )}
+          <div className="shrink-0 space-y-2">
+            {testResult && (
+                <div className="p-3 bg-green-50 text-green-700 border border-green-200 text-sm rounded-lg flex items-center">
+                <svg className="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                {testResult}
+                </div>
+            )}
+            
+            {error && (
+                <div className="p-3 bg-red-50 text-red-700 border border-red-200 text-sm rounded-lg flex items-center break-all">
+                <svg className="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                {error}
+                </div>
+            )}
 
-          <div className="flex gap-3 pt-2">
-            <button
-              type="button"
-              onClick={handleBack}
-              className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-lg transition-colors"
-            >
-              返回
-            </button>
-            <button
-              type="button"
-              onClick={handleStart}
-              className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition-all active:scale-95"
-            >
-              启动任务
-            </button>
+            <div className="flex gap-3 pt-2">
+                <button
+                type="button"
+                onClick={handleBack}
+                className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-lg transition-colors"
+                >
+                返回
+                </button>
+                <button
+                type="button"
+                onClick={handleStart}
+                className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition-all active:scale-95"
+                >
+                启动任务
+                </button>
+            </div>
           </div>
         </div>
       )}
