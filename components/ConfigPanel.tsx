@@ -86,7 +86,12 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
     if (result.available) {
       setTestResult(`连接成功! 延迟: ${result.latency}ms`);
     } else {
-      setError(`连接失败: ${result.error}`);
+      // Improve error readability
+      if (result.error?.includes("Token 无效")) {
+        setError("连接被拒绝：Base URL 可能未生效，导致请求直连了 Google 官方。请检查 Base URL 是否正确。");
+      } else {
+        setError(`连接失败: ${result.error}`);
+      }
     }
     setIsTesting(false);
   };
@@ -126,7 +131,6 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
       
       if (result.available) {
           successCount++;
-          // If the currently selected model is invalid or unset, auto-switch to this valid one
           if (successCount === 1) {
               setModel(updatedModels[i].id);
           }
@@ -134,13 +138,12 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
       
       setAvailableModels([...updatedModels]);
       
-      // Small delay to prevent rate limits from being hit instantly
       await new Promise(r => setTimeout(r, 150));
     }
     
     setIsTesting(false);
     if (successCount === 0) {
-        setError("所有模型测试均失败。请重点检查 Base URL 是否多写了 /v1beta 等后缀，或 Token 是否正确。");
+        setError("所有模型均不可用。提示：如果看到 'Token 无效' 错误，请尝试删除 Base URL 中的 /v1beta 等后缀，只保留域名。");
     } else {
         setTestResult(`测试完成。共发现 ${successCount} 个可用模型。`);
     }
@@ -197,10 +200,11 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
               placeholder="https://proxy.example.com"
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
             />
-            <p className="text-xs text-gray-500 mt-1 bg-blue-50 p-2 rounded">
-              <strong>提示：</strong> 请只填写域名或基础路径（如 <code>https://api.xyz.com</code>）。<br/>
-              程序会自动处理 <code>/v1beta</code> 等后缀。请勿手动添加它们。
-            </p>
+            <div className="text-xs text-gray-500 mt-1 bg-yellow-50 p-2 rounded border border-yellow-100">
+              <strong>重要提示：</strong> 如果使用第三方代理 Token，必须填写 Base URL。<br/>
+              程序已强制拦截官方请求，将其重定向至您填写的地址。<br/>
+              建议格式: <code>https://your-domain.com</code> (一般无需加 /v1beta)
+            </div>
           </div>
 
           <button
@@ -209,7 +213,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
             className={`w-full py-3 rounded-lg text-white font-semibold shadow-md transition-all 
               ${isValidating ? 'bg-blue-400 cursor-wait' : 'bg-blue-600 hover:bg-blue-700 active:scale-95'}`}
           >
-            {isValidating ? '验证连接...' : '下一步'}
+            {isValidating ? '验证并获取列表...' : '下一步'}
           </button>
         </form>
       ) : (
@@ -251,7 +255,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
           
           <div className="flex items-center justify-between shrink-0">
              <span className="text-xs text-gray-500">
-               {availableModels.length > 0 ? `候选模型: ${availableModels.length} 个` : '未检测到列表'}
+               {availableModels.length > 0 ? `候选模型: ${availableModels.length} 个` : '使用默认列表'}
              </span>
              <button 
                 type="button"

@@ -2,26 +2,47 @@ import { GoogleGenAI } from "@google/genai";
 import { AppConfig, DigestData, ModelOption } from "../types";
 import { DEFAULT_MODELS } from "../constants";
 
+// Helper: Custom Fetch to force Base URL override
+// This resolves issues where the SDK might ignore baseUrl in certain configurations
+// or when using specific proxy structures.
+const createCustomFetch = (baseUrl: string) => {
+  return async (url: RequestInfo | URL, options?: RequestInit) => {
+    let urlString = url.toString();
+    
+    // We define the standard Google host to be replaced
+    const googleHost = "generativelanguage.googleapis.com";
+    
+    // Clean user base url: remove trailing slashes
+    const cleanBaseUrl = baseUrl.replace(/\/+$/, '');
+
+    // If the request is trying to hit Google, we redirect it to the proxy
+    if (urlString.includes(googleHost)) {
+      // Logic: 
+      // Original: https://generativelanguage.googleapis.com/v1beta/models/...
+      // Target:   https://proxy.example.com/v1beta/models/...
+      // We replace the entire protocol + host part.
+      urlString = urlString.replace("https://" + googleHost, cleanBaseUrl);
+      
+      console.log(`[Proxy Redirect] ${url} -> ${urlString}`);
+    }
+
+    return fetch(urlString, options);
+  };
+};
+
 // Helper to create a client with dynamic configuration
 const createClient = (config: { apiKey: string; baseUrl?: string }) => {
   const options: any = {
     apiKey: config.apiKey
   };
   
-  if (config.baseUrl) {
-    let url = config.baseUrl.trim();
-    // 1. Remove trailing slash
-    url = url.replace(/\/+$/, '');
+  if (config.baseUrl && config.baseUrl.trim().length > 0) {
+    // 1. Pass baseUrl directly (if SDK supports it)
+    options.baseUrl = config.baseUrl.replace(/\/+$/, '');
     
-    // 2. Critical: Remove version suffixes often pasted by mistake.
-    // The SDK automatically appends /v1beta (or similar), so if the user provides 
-    // "https://proxy.com/v1beta", it becomes "https://proxy.com/v1beta/v1beta" -> 404/400.
-    // We strip these common endings to ensure the SDK constructs the correct root.
-    url = url.replace(/\/v1beta$/, '');
-    url = url.replace(/\/v1$/, ''); // Some proxies use /v1, but Gemini SDK usually expects root or specific mapping.
-    url = url.replace(/\/models$/, '');
-
-    options.baseUrl = url;
+    // 2. IMPORTANT: Pass a custom fetch to GUARANTEE the redirect happens.
+    // This fixes the "API Key Not Valid" error caused by SDK falling back to googleapis.com
+    options.fetch = createCustomFetch(options.baseUrl);
   }
 
   return new GoogleGenAI(options);
@@ -58,11 +79,11 @@ export const checkModelAvailability = async (
     ) {
        // However, if it's explicitly "API key not valid", it is NOT available.
        if (msg.includes("API key not valid") || msg.includes("403") || msg.includes("401")) {
-         return { available: false, error: "权限/Key无效" };
+         return { available: false, error: "Token 无效或 BaseURL 未生效 (请求被 Google 拒绝)" };
        }
        // If it's 404 Not Found, it's unavailable.
        if (msg.includes("404") || msg.includes("Not Found")) {
-         return { available: false, error: "模型不存在 (404)" };
+         return { available: false, error: "模型不存在 (404) 或 路径错误" };
        }
 
        // Otherwise, assume the model is there but picky about input
@@ -77,7 +98,7 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
   const ai = createClient({ apiKey, baseUrl });
   
   try {
-    console.log("Attempting to fetch models from:", baseUrl || "Default Google Endpoint");
+    console.log("Attempting to fetch models. BaseURL:", baseUrl || "Default");
     
     // Attempt to list models
     const response: any = await ai.models.list();
@@ -180,6 +201,7 @@ export const generateDailyDigest = async (
   try {
     onLog("尝试连接 Google Search 工具进行增强搜索...");
     
+    // Check if tools are supported by the model (simple heuristic or trial)
     const response = await ai.models.generateContent({
       model: config.model,
       contents: prompt,
