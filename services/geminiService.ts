@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import { AppConfig, DigestData } from "../types";
+import { AppConfig, DigestData, ModelOption } from "../types";
 import { DEFAULT_MODELS } from "../constants";
 
 // Helper to create a client with dynamic configuration
@@ -13,18 +13,31 @@ const createClient = (config: { apiKey: string; baseUrl?: string }) => {
     options.baseUrl = config.baseUrl.replace(/\/+$/, '');
   }
 
-  // HACK: Override the global fetch for this instance context if possible, 
-  // or rely on the SDK's internal fetch usage. 
-  // Since we can't easily pass a custom fetch to the constructor in all versions,
-  // we will try to be standard. 
-  // However, for 'sk-' keys, some proxies require 'Authorization: Bearer'.
-  // We can't easily inject this without patching fetch globally or if SDK supports it.
-  // We will rely on standard behavior first.
-  
   return new GoogleGenAI(options);
 };
 
-export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Promise<{id: string, name: string}[]> => {
+// Test a single model's connectivity
+export const checkModelAvailability = async (
+  apiKey: string, 
+  baseUrl: string, 
+  modelId: string
+): Promise<{ available: boolean; latency?: number; error?: string }> => {
+  const ai = createClient({ apiKey, baseUrl });
+  const start = Date.now();
+  
+  try {
+    // Try a very simple generation task
+    await ai.models.generateContent({
+      model: modelId,
+      contents: { parts: [{ text: "Hi" }] },
+    });
+    return { available: true, latency: Date.now() - start };
+  } catch (error: any) {
+    return { available: false, error: error.message || "Unknown error" };
+  }
+};
+
+export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Promise<ModelOption[]> => {
   const ai = createClient({ apiKey, baseUrl });
   
   try {
@@ -42,30 +55,20 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
           const id = m.name.replace(/^models\//, '');
           return {
             id: id,
-            name: m.displayName ? `${m.displayName} (${id})` : id
+            name: m.displayName ? `${m.displayName} (${id})` : id,
+            status: 'unknown'
           };
         });
-
-      // Sort models
-      models.sort((a: any, b: any) => {
-        const score = (str: string) => {
-          const s = str.toLowerCase();
-          if (s.includes('flash')) return 3;
-          if (s.includes('pro')) return 2;
-          return 1;
-        };
-        return score(b.id) - score(a.id);
-      });
-
+        
       console.log(`Successfully fetched ${models.length} models.`);
-      return models.length > 0 ? models : DEFAULT_MODELS;
+      return models.length > 0 ? models : DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption));
     }
     
     throw new Error("Empty model list");
 
   } catch (listError: any) {
-    console.warn("Model listing failed or not supported by proxy. Using default model list.", listError.message);
-    return DEFAULT_MODELS;
+    console.warn("Model listing failed, using defaults.", listError.message);
+    return DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption));
   }
 };
 
@@ -163,8 +166,6 @@ export const generateDailyDigest = async (
 
   } catch (error: any) {
     // --- Fallback: Retry WITHOUT tools ---
-    // Many proxies ("New API", "OneAPI") do not support the googleSearch tool and return 400/500 errors.
-    // If we hit an error, we strip the tools and retry, asking the model to use its internal knowledge.
     
     onLog(`增强模式失败 (${error.message || 'Unknown Error'})。`);
     onLog("正在尝试降级模式 (不使用 Google Search 工具)...");
@@ -178,7 +179,6 @@ export const generateDailyDigest = async (
     `;
 
     try {
-        // Fallback options: try without tools
         const response = await ai.models.generateContent({
           model: config.model,
           contents: fallbackPrompt,

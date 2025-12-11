@@ -1,10 +1,23 @@
 export const DEFAULT_MODELS = [
+  // 2.5 Series
   { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
   { id: 'gemini-2.5-flash-lite-latest', name: 'Gemini 2.5 Flash Lite' },
+  
+  // 3.0 Series
   { id: 'gemini-3-pro-preview', name: 'Gemini 3.0 Pro' },
+  
+  // 1.5 Pro Series
   { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
+  { id: 'gemini-1.5-pro-latest', name: 'Gemini 1.5 Pro (Latest)' },
+  
+  // 1.5 Flash Series
   { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash' },
-  { id: 'gemini-pro', name: 'Gemini Pro (Legacy)' },
+  { id: 'gemini-1.5-flash-latest', name: 'Gemini 1.5 Flash (Latest)' },
+  { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash-8B' },
+
+  // 1.0 / Legacy Series (Often used by proxies)
+  { id: 'gemini-pro', name: 'Gemini 1.0 Pro' },
+  { id: 'gemini-1.0-pro', name: 'Gemini 1.0 Pro (Explicit)' },
 ];
 
 export const MOCK_EMAIL_STYLES = {

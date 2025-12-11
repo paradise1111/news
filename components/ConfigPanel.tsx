@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { AppConfig, AppStatus } from '../types';
+import { AppConfig, AppStatus, ModelOption } from '../types';
 import { DEFAULT_MODELS } from '../constants';
-import { verifyAndFetchModels } from '../services/geminiService';
+import { verifyAndFetchModels, checkModelAvailability } from '../services/geminiService';
 
 interface ConfigPanelProps {
   onConfigConfirmed: (config: AppConfig) => void;
@@ -14,11 +14,13 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [model, setModel] = useState('');
-  const [availableModels, setAvailableModels] = useState<{id: string, name: string}[]>(DEFAULT_MODELS);
+  const [availableModels, setAvailableModels] = useState<ModelOption[]>(DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption)));
   
   const [step, setStep] = useState<'credentials' | 'model'>('credentials');
   const [isValidating, setIsValidating] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<string | null>(null);
 
   // Load saved config on mount
   useEffect(() => {
@@ -45,28 +47,63 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
     setError(null);
 
     try {
-      // Use defaults if fetch fails (logic inside service)
       const models = await verifyAndFetchModels(apiKey, baseUrl);
       
-      // Save config to local storage
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ apiKey, baseUrl }));
 
       setAvailableModels(models);
-      // Default to the first available model if not already set
-      if (models.length > 0) {
+      // Default to the first model if not set
+      if (models.length > 0 && !model) {
         setModel(models[0].id);
+      } else if (!model) {
+        setModel(DEFAULT_MODELS[0].id);
       }
       setStep('model');
     } catch (err: any) {
-      // Even if it throws (unlikely with new service logic), we fallback
+      // Should rarely reach here due to service fallback, but just in case
       console.warn("Connection warning:", err);
-      setAvailableModels(DEFAULT_MODELS);
+      setAvailableModels(DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption)));
       setModel(DEFAULT_MODELS[0].id);
       setStep('model');
-      setError("无法验证 API Key，但已启用离线模式。如果 Key 无效，任务将失败。");
     } finally {
       setIsValidating(false);
     }
+  };
+
+  const handleTestSingleModel = async () => {
+    if (!model) return;
+    setIsTesting(true);
+    setTestResult(null);
+    setError(null);
+    
+    const result = await checkModelAvailability(apiKey, baseUrl, model);
+    
+    if (result.available) {
+      setTestResult(`连接成功! 延迟: ${result.latency}ms`);
+    } else {
+      setError(`连接失败: ${result.error}`);
+    }
+    setIsTesting(false);
+  };
+
+  const handleTestAllModels = async () => {
+    setIsTesting(true);
+    const updatedModels = [...availableModels];
+    
+    for (let i = 0; i < updatedModels.length; i++) {
+      updatedModels[i] = { ...updatedModels[i], status: 'testing' };
+      setAvailableModels([...updatedModels]);
+      
+      const result = await checkModelAvailability(apiKey, baseUrl, updatedModels[i].id);
+      
+      updatedModels[i] = { 
+        ...updatedModels[i], 
+        status: result.available ? 'available' : 'unavailable',
+        latency: result.latency
+      };
+      setAvailableModels([...updatedModels]);
+    }
+    setIsTesting(false);
   };
 
   const handleStart = (e: React.FormEvent) => {
@@ -82,14 +119,15 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
   const handleBack = () => {
     setStep('credentials');
     setError(null);
+    setTestResult(null);
   };
 
   return (
-    <div className="max-w-md w-full bg-white rounded-xl shadow-2xl p-8 border border-gray-100 relative overflow-hidden">
+    <div className="max-w-xl w-full bg-white rounded-xl shadow-2xl p-8 border border-gray-100 relative overflow-hidden">
       <div className="text-center mb-8">
         <h2 className="text-2xl font-bold text-gray-800">Daily Pulse Setup</h2>
         <p className="text-gray-500 text-sm mt-2">
-          {step === 'credentials' ? '连接 Gemini API' : '选择 AI 模型'}
+          {step === 'credentials' ? '连接 Gemini API' : '选择 & 测试模型'}
         </p>
       </div>
 
@@ -106,20 +144,20 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
               placeholder="AIzaSy..."
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
             />
-            <p className="text-xs text-gray-400 mt-1">Key 仅存储在本地浏览器中。</p>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Base URL (可选 - 代理地址)
+              Base URL (代理地址)
             </label>
             <input
               type="text"
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://generativelanguage.googleapis.com"
+              placeholder="https://... (无需 /v1beta)"
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
             />
+            <p className="text-xs text-gray-400 mt-1">注意：如果 API 提示 404，尝试移除 URL 末尾的 `/v1` 或 `/v1beta`。</p>
           </div>
 
           <button
@@ -128,45 +166,87 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
             className={`w-full py-3 rounded-lg text-white font-semibold shadow-md transition-all 
               ${isValidating ? 'bg-blue-400 cursor-wait' : 'bg-blue-600 hover:bg-blue-700 active:scale-95'}`}
           >
-            {isValidating ? (
-              <span className="flex items-center justify-center gap-2">
-                <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                正在连接...
-              </span>
-            ) : '下一步'}
+            {isValidating ? '连接中...' : '下一步'}
           </button>
         </form>
       ) : (
-        <form onSubmit={handleStart} className="space-y-6 animate-fadeIn">
+        <div className="space-y-6 animate-fadeIn">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              模型名称
-            </label>
-            <div className="relative">
-              {/* 使用 input + datalist 实现可编辑的下拉框 */}
+            <div className="flex justify-between items-center mb-1">
+               <label className="block text-sm font-medium text-gray-700">
+                模型选择
+              </label>
+              <button 
+                type="button"
+                onClick={handleTestAllModels}
+                disabled={isTesting}
+                className="text-xs text-indigo-600 hover:text-indigo-800 font-medium underline disabled:opacity-50"
+              >
+                {isTesting ? '正在检测...' : '🔎 全量检测可用性'}
+              </button>
+            </div>
+           
+            <div className="relative flex gap-2">
               <input
                 list="model-options"
                 type="text"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
                 placeholder="输入或选择模型..."
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
               />
-              <datalist id="model-options">
-                {availableModels.map((m) => (
-                  <option key={m.id} value={m.id}>{m.name}</option>
-                ))}
-              </datalist>
+               <button
+                type="button"
+                onClick={handleTestSingleModel}
+                disabled={isTesting || !model}
+                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium text-sm transition-colors border border-gray-200 whitespace-nowrap"
+              >
+                {isTesting ? '...' : '测试连接'}
+              </button>
             </div>
-            <p className="text-xs text-gray-500 mt-2">
-              提示: 您可以直接输入自定义模型 ID (如中转 API 需要特定映射名)。
-            </p>
+            <datalist id="model-options">
+              {availableModels.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </datalist>
+
+            {/* Models Status List */}
+            <div className="mt-4 max-h-48 overflow-y-auto border border-gray-100 rounded-lg bg-gray-50 p-2 text-xs">
+                <p className="text-gray-400 mb-2 px-2">可用模型列表 (点击上方“全量检测”更新状态):</p>
+                {availableModels.map((m) => (
+                    <div 
+                        key={m.id} 
+                        onClick={() => setModel(m.id)}
+                        className={`flex items-center justify-between p-2 rounded cursor-pointer hover:bg-white transition-colors ${model === m.id ? 'bg-blue-50 border border-blue-100' : ''}`}
+                    >
+                        <span className="font-medium truncate mr-2">{m.name || m.id}</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                            {m.status === 'testing' && <span className="animate-spin w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full"></span>}
+                            {m.status === 'available' && <span className="text-green-600 flex items-center gap-1">✅ <span className="text-[10px] opacity-70">{m.latency}ms</span></span>}
+                            {m.status === 'unavailable' && <span className="text-red-500">❌</span>}
+                            {m.status === 'unknown' && <span className="text-gray-300">⚪</span>}
+                        </div>
+                    </div>
+                ))}
+            </div>
           </div>
 
-          <div className="flex gap-3">
+          {/* Messages */}
+          {testResult && (
+            <div className="p-3 bg-green-50 text-green-700 border border-green-200 text-sm rounded-lg flex items-center">
+               <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+               {testResult}
+            </div>
+          )}
+          
+          {error && (
+            <div className="p-3 bg-red-50 text-red-700 border border-red-200 text-sm rounded-lg flex items-center break-all">
+              <svg className="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+              {error}
+            </div>
+          )}
+
+          <div className="flex gap-3 pt-2">
             <button
               type="button"
               onClick={handleBack}
@@ -175,21 +255,13 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
               返回
             </button>
             <button
-              type="submit"
+              type="button"
+              onClick={handleStart}
               className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition-all active:scale-95"
             >
               启动任务
             </button>
           </div>
-        </form>
-      )}
-
-      {error && (
-        <div className="mt-6 p-3 bg-yellow-50 text-yellow-800 border border-yellow-200 text-sm rounded-lg flex items-center animate-shake break-all">
-          <svg className="w-5 h-5 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-          </svg>
-          {error}
         </div>
       )}
       
