@@ -178,7 +178,7 @@ export const generateDailyDigest = async (
 ): Promise<DigestData> => {
   onLog(`正在初始化 (API 模式: OpenAI 兼容 / 边缘心跳代理, 模型: ${config.model})...`);
 
-  // Prompt updated to enforce using the search tool
+  // Prompt updated: Reduced item count from 10 to 5 to avoid token limits/timeouts
   const prompt = `
     You are an automated Daily Information Digest agent.
     
@@ -187,13 +187,13 @@ export const generateDailyDigest = async (
     Do NOT hallucinate or make up news. If you cannot find a link using the tool, do not include the item.
     
     ### Task 1: Social Media & Trends (The "Pulse")
-    - **Goal**: Identify the TOP 10 trending topics/news today using Google Search.
+    - **Goal**: Identify the TOP 5 trending topics/news today using Google Search.
     - **Filter**: Ignore minor celebrity gossip. Focus on tech news, major cultural memes, or significant global discussions.
-    - **Quantity**: Provide EXACTLY 10 distinct items.
+    - **Quantity**: Provide EXACTLY 5 distinct items.
 
     ### Task 2: Health & Science (The "Breakthroughs")
-    - **Goal**: Find the TOP 10 high-impact medical or health news from reputable sources using Google Search.
-    - **Quantity**: Provide EXACTLY 10 distinct items.
+    - **Goal**: Find the TOP 5 high-impact medical or health news from reputable sources using Google Search.
+    - **Quantity**: Provide EXACTLY 5 distinct items.
 
     ### Output Requirements (CRITICAL)
     1. **Depth**: Each English summary must be substantial (approx 60-80 words). Explain context, impact, and why it matters.
@@ -259,6 +259,7 @@ export const generateDailyDigest = async (
     onLog("接收到数据，正在解析...");
 
     let text = content.trim();
+    // 清理 Markdown 代码块
     if (text.includes("```json")) {
         text = text.replace(/```json/g, "").replace(/```/g, "");
     } else if (text.includes("```")) {
@@ -270,11 +271,21 @@ export const generateDailyDigest = async (
         data = JSON.parse(text);
     } catch (parseError) {
         onLog("JSON 解析初步失败，尝试正则提取...");
+        // 尝试提取第一个 { 和最后一个 } 之间的内容
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-            data = JSON.parse(jsonMatch[0]);
+            try {
+                data = JSON.parse(jsonMatch[0]);
+            } catch (e) {
+                 const snippet = text.length > 100 ? text.substring(0, 100) + "..." : text;
+                 console.error("Regex match failed parsing:", e);
+                 console.error("Raw Content:", text);
+                 throw new Error(`无法从返回内容中提取有效 JSON。原始内容预览: ${snippet}`);
+            }
         } else {
-             throw new Error("API 返回的数据不是有效的 JSON 格式");
+             const snippet = text.length > 100 ? text.substring(0, 100) + "..." : text;
+             console.error("No JSON block found. Raw Content:", text);
+             throw new Error(`API 返回了非 JSON 格式数据。这可能是因为模型拒绝了请求或返回了纯文本。预览: ${snippet}`);
         }
     }
 
