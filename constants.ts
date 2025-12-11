@@ -32,6 +32,10 @@ export const DEFAULT_MODELS = [
   { id: 'gemini-1.0-pro', name: 'Gemini 1.0 Pro' },
   { id: 'gemini-1.0-pro-latest', name: 'Gemini 1.0 Pro (Latest)' },
   { id: 'gemini-pro-vision', name: 'Gemini Pro Vision' },
+  
+  // --- Common Proxy Mappings (Try these if others fail) ---
+  { id: 'google-gemini-pro', name: 'Google Gemini Pro (Proxy Alias)' },
+  { id: 'gemini', name: 'Gemini (Generic)' }
 ];
 
 export const MOCK_EMAIL_STYLES = {

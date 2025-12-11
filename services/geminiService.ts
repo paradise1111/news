@@ -9,8 +9,19 @@ const createClient = (config: { apiKey: string; baseUrl?: string }) => {
   };
   
   if (config.baseUrl) {
-    // Clean the Base URL: remove trailing slashes
-    options.baseUrl = config.baseUrl.replace(/\/+$/, '');
+    let url = config.baseUrl.trim();
+    // 1. Remove trailing slash
+    url = url.replace(/\/+$/, '');
+    
+    // 2. Critical: Remove version suffixes often pasted by mistake.
+    // The SDK automatically appends /v1beta (or similar), so if the user provides 
+    // "https://proxy.com/v1beta", it becomes "https://proxy.com/v1beta/v1beta" -> 404/400.
+    // We strip these common endings to ensure the SDK constructs the correct root.
+    url = url.replace(/\/v1beta$/, '');
+    url = url.replace(/\/v1$/, ''); // Some proxies use /v1, but Gemini SDK usually expects root or specific mapping.
+    url = url.replace(/\/models$/, '');
+
+    options.baseUrl = url;
   }
 
   return new GoogleGenAI(options);
@@ -33,7 +44,32 @@ export const checkModelAvailability = async (
     });
     return { available: true, latency: Date.now() - start };
   } catch (error: any) {
-    return { available: false, error: error.message || "Unknown error" };
+    const msg = error.message || "";
+    
+    // SMART CHECK:
+    // If the error is about "Model requires image" or "Multi-turn chat not supported", 
+    // it implies the connection SUCCEEDED and the model EXISTS, but our test payload was wrong.
+    // We count this as AVAILABLE.
+    if (
+      msg.includes("image") || 
+      msg.includes("media") || 
+      msg.includes("modalities") ||
+      msg.includes("Invalid argument") // Sometimes prompt format issues
+    ) {
+       // However, if it's explicitly "API key not valid", it is NOT available.
+       if (msg.includes("API key not valid") || msg.includes("403") || msg.includes("401")) {
+         return { available: false, error: "权限/Key无效" };
+       }
+       // If it's 404 Not Found, it's unavailable.
+       if (msg.includes("404") || msg.includes("Not Found")) {
+         return { available: false, error: "模型不存在 (404)" };
+       }
+
+       // Otherwise, assume the model is there but picky about input
+       return { available: true, latency: Date.now() - start };
+    }
+
+    return { available: false, error: msg };
   }
 };
 
@@ -80,7 +116,6 @@ export const generateDailyDigest = async (
 
   onLog(`正在初始化模型: ${config.model}...`);
 
-  // Prompt configuration
   const prompt = `
     You are an automated Daily Information Digest agent.
     
@@ -115,7 +150,6 @@ export const generateDailyDigest = async (
     }
   `;
 
-  // Helper to process response text
   const processResponseText = (text: string | undefined): DigestData => {
     if (!text) throw new Error("未能从 Gemini 接收到数据 (Empty Response)。");
 
@@ -143,7 +177,6 @@ export const generateDailyDigest = async (
     }
   };
 
-  // --- Attempt 1: With Google Search Tools ---
   try {
     onLog("尝试连接 Google Search 工具进行增强搜索...");
     
@@ -165,12 +198,9 @@ export const generateDailyDigest = async (
     return data;
 
   } catch (error: any) {
-    // --- Fallback: Retry WITHOUT tools ---
-    
     onLog(`增强模式失败 (${error.message || 'Unknown Error'})。`);
     onLog("正在尝试降级模式 (不使用 Google Search 工具)...");
     
-    // Modify prompt slightly to acknowledge lack of real-time search
     const fallbackPrompt = prompt + `
     
     [IMPORTANT NOTE]
@@ -183,7 +213,6 @@ export const generateDailyDigest = async (
           model: config.model,
           contents: fallbackPrompt,
           config: {
-            // Remove tools
             systemInstruction: "You are a professional news analyst.",
           },
         });

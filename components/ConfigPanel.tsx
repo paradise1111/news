@@ -59,15 +59,14 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
       
       setAvailableModels(modelsToUse);
       
-      if (modelsToUse.length > 0 && !model) {
+      // Select first valid/default model
+      if (!model) {
         setModel(modelsToUse[0].id);
-      } else if (!model) {
-        setModel(DEFAULT_MODELS[0].id);
       }
       setStep('model');
     } catch (err: any) {
       console.warn("Connection warning:", err);
-      // Fallback to default list if listing fails (common with some proxies)
+      // Fallback to default list
       setAvailableModels(DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption)));
       setModel(DEFAULT_MODELS[0].id);
       setStep('model');
@@ -111,7 +110,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
       
       // Auto scroll to current item
       if (listRef.current) {
-         const element = listRef.current.children[i+1] as HTMLElement; // +1 for the label p tag
+         const element = listRef.current.children[i+1] as HTMLElement; 
          if (element) {
              element.scrollIntoView({ behavior: 'smooth', block: 'center' });
          }
@@ -127,21 +126,21 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
       
       if (result.available) {
           successCount++;
-          // If the currently selected model is invalid, auto-switch to this valid one
-          if (!successCount || model === '') {
+          // If the currently selected model is invalid or unset, auto-switch to this valid one
+          if (successCount === 1) {
               setModel(updatedModels[i].id);
           }
       }
       
       setAvailableModels([...updatedModels]);
       
-      // Small delay to prevent rate limits from being hit instantly if the proxy is sensitive
-      await new Promise(r => setTimeout(r, 200));
+      // Small delay to prevent rate limits from being hit instantly
+      await new Promise(r => setTimeout(r, 150));
     }
     
     setIsTesting(false);
     if (successCount === 0) {
-        setError("所有模型测试均失败。请检查令牌 (Token) 是否正确，或 Base URL 是否匹配该令牌。");
+        setError("所有模型测试均失败。请重点检查 Base URL 是否多写了 /v1beta 等后缀，或 Token 是否正确。");
     } else {
         setTestResult(`测试完成。共发现 ${successCount} 个可用模型。`);
     }
@@ -182,12 +181,9 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="输入服务商令牌 (如 sk-...) 或 Google API Key..."
+              placeholder="sk-..."
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
             />
-            <p className="text-xs text-gray-400 mt-1">
-              如果您使用的是第三方中转/公益服务，请在此填入对应的 Token。
-            </p>
           </div>
 
           <div>
@@ -198,11 +194,12 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
               type="text"
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://proxy.example.com (使用 Token 时必填)"
+              placeholder="https://proxy.example.com"
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
             />
-            <p className="text-xs text-gray-400 mt-1">
-              注意：使用第三方 Token 时，必须填写对应的 Base URL，否则会请求失败。
+            <p className="text-xs text-gray-500 mt-1 bg-blue-50 p-2 rounded">
+              <strong>提示：</strong> 请只填写域名或基础路径（如 <code>https://api.xyz.com</code>）。<br/>
+              程序会自动处理 <code>/v1beta</code> 等后缀。请勿手动添加它们。
             </p>
           </div>
 
@@ -221,6 +218,9 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
             <div className="flex justify-between items-center mb-1">
                <label className="block text-sm font-medium text-gray-700">
                 当前选择模型
+                <a href="https://ai.google.dev/gemini-api/docs/models/gemini" target="_blank" rel="noopener noreferrer" className="ml-2 text-blue-500 text-xs hover:underline font-normal">
+                  (查看官方模型列表)
+                </a>
               </label>
             </div>
            
@@ -251,7 +251,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
           
           <div className="flex items-center justify-between shrink-0">
              <span className="text-xs text-gray-500">
-               {availableModels.length > 0 ? `检测到 ${availableModels.length} 个候选模型` : '未检测到模型列表，建议全量扫描'}
+               {availableModels.length > 0 ? `候选模型: ${availableModels.length} 个` : '未检测到列表'}
              </span>
              <button 
                 type="button"
@@ -259,14 +259,14 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
                 disabled={isTesting}
                 className={`text-xs px-3 py-1 rounded-full border transition-all ${isTesting ? 'bg-gray-100 text-gray-400' : 'bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100'}`}
               >
-                {isTesting ? '正在全量扫描中...' : '🔎 开始全量扫描 (Test All)'}
+                {isTesting ? '扫描中...' : '🔎 重新扫描所有模型'}
               </button>
           </div>
 
           {/* Models Status List */}
           <div ref={listRef} className="flex-1 min-h-[150px] overflow-y-auto border border-gray-100 rounded-lg bg-gray-50 p-2 text-xs">
-                <p className="text-gray-400 mb-2 px-2 sticky top-0 bg-gray-50 pb-1 border-b border-gray-100">
-                    模型连通性状态:
+                <p className="text-gray-400 mb-2 px-2 sticky top-0 bg-gray-50 pb-1 border-b border-gray-100 z-10">
+                    连通性状态:
                 </p>
                 {availableModels.map((m) => (
                     <div 
@@ -313,14 +313,14 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
                 onClick={handleBack}
                 className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-lg transition-colors"
                 >
-                返回修改配置
+                返回修改
                 </button>
                 <button
                 type="button"
                 onClick={handleStart}
                 className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition-all active:scale-95"
                 >
-                启动生成任务
+                启动任务
                 </button>
             </div>
           </div>
