@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
 
-// --- 核心修改：切换到 Edge Runtime ---
-// Edge Runtime 没有 10s/60s 的执行时间限制，只要连接保持活跃（Streaming）即可
-export const runtime = 'edge';
+// --- 核心修改：切换回 Node.js Runtime 并设置最大超时 ---
+// Vercel Hobby 免费版限制：Node.js 函数最大执行时间为 60秒。
+// 相比 Edge Runtime 的 25秒首字节限制 (TTFB)，Node.js 允许我们实打实地等 60秒。
+// 只要 Gemini 在 60秒内返回结果，这个代理就能工作。
+export const maxDuration = 60; 
+export const dynamic = 'force-dynamic'; // 确保不被静态缓存
 
 export async function OPTIONS() {
   return new NextResponse(null, {
@@ -32,25 +35,24 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing targetUrl parameter' }, { status: 400 });
     }
 
-    console.log(`[Edge Proxy] Forwarding to: ${targetUrl}`);
+    console.log(`[Node Proxy] Forwarding to: ${targetUrl}`);
 
-    // 2. 发起后端请求 (Edge fetch)
+    // 2. 发起后端请求
+    // 使用 Node.js 的 fetch 等待上游响应
     const upstreamResponse = await fetch(targetUrl, {
       method: method || 'POST',
       headers: headers || {},
       body: body ? JSON.stringify(body) : undefined,
     });
 
-    // 3. 关键修改：直接透传 Stream (流)
-    // 我们不再使用 await upstreamResponse.text() 等待整个响应，
-    // 而是直接把 upstreamResponse.body (ReadableStream) 传回给客户端。
-    // 这样可以绕过 Vercel 的 60秒 响应超时限制。
+    // 3. 处理响应
+    // 尽管是 Node.js 环境，我们依然可以使用 Response 透传 body，
+    // 这样代码结构最简洁，且能兼容流式或普通 JSON 返回。
     
     // 复制需要的 Headers
     const responseHeaders = new Headers();
     responseHeaders.set('Access-Control-Allow-Origin', '*');
     
-    // 传递 Content-Type (通常是 application/json 或 text/event-stream)
     const contentType = upstreamResponse.headers.get('Content-Type');
     if (contentType) {
         responseHeaders.set('Content-Type', contentType);
@@ -63,9 +65,9 @@ export async function POST(req: Request) {
     });
 
   } catch (error: any) {
-    console.error('[Edge Proxy Internal Error]', error);
+    console.error('[Node Proxy Internal Error]', error);
     return NextResponse.json(
-        { error: 'Edge Proxy Error: ' + error.message }, 
+        { error: 'Node Proxy Error: ' + error.message }, 
         { status: 500 }
     );
   }
