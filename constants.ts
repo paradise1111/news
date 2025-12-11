@@ -1,41 +1,8 @@
 export const DEFAULT_MODELS = [
-  // --- 2.5 Series (Latest) ---
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
-  { id: 'gemini-2.5-flash-latest', name: 'Gemini 2.5 Flash (Latest)' },
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash (Recommended)' },
   { id: 'gemini-2.5-flash-lite-latest', name: 'Gemini 2.5 Flash Lite' },
-  { id: 'gemini-2.5-pro-preview', name: 'Gemini 2.5 Pro Preview' }, // Guess/Future proofing
-  
-  // --- 2.0 Series (Experimental) ---
-  { id: 'gemini-2.0-flash-exp', name: 'Gemini 2.0 Flash Exp' },
-  { id: 'gemini-2.0-pro-exp', name: 'Gemini 2.0 Pro Exp' },
-  { id: 'gemini-exp-1206', name: 'Gemini Exp 1206' },
-
-  // --- 3.0 Series (Preview) ---
   { id: 'gemini-3-pro-preview', name: 'Gemini 3.0 Pro' },
-
-  // --- 1.5 Pro Series ---
-  { id: 'gemini-1.5-pro', name: 'Gemini 1.5 Pro' },
-  { id: 'gemini-1.5-pro-latest', name: 'Gemini 1.5 Pro (Latest)' },
-  { id: 'gemini-1.5-pro-001', name: 'Gemini 1.5 Pro-001' },
-  { id: 'gemini-1.5-pro-002', name: 'Gemini 1.5 Pro-002' },
-
-  // --- 1.5 Flash Series ---
-  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash' },
-  { id: 'gemini-1.5-flash-latest', name: 'Gemini 1.5 Flash (Latest)' },
-  { id: 'gemini-1.5-flash-001', name: 'Gemini 1.5 Flash-001' },
-  { id: 'gemini-1.5-flash-002', name: 'Gemini 1.5 Flash-002' },
-  { id: 'gemini-1.5-flash-8b', name: 'Gemini 1.5 Flash-8B' },
-  { id: 'gemini-1.5-flash-8b-latest', name: 'Gemini 1.5 Flash-8B (Latest)' },
-
-  // --- Legacy / Aliases (Common in proxies) ---
-  { id: 'gemini-pro', name: 'Gemini Pro (1.0)' },
-  { id: 'gemini-1.0-pro', name: 'Gemini 1.0 Pro' },
-  { id: 'gemini-1.0-pro-latest', name: 'Gemini 1.0 Pro (Latest)' },
-  { id: 'gemini-pro-vision', name: 'Gemini Pro Vision' },
-  
-  // --- Common Proxy Mappings (Try these if others fail) ---
-  { id: 'google-gemini-pro', name: 'Google Gemini Pro (Proxy Alias)' },
-  { id: 'gemini', name: 'Gemini (Generic)' }
+  { id: 'gemini-1.5-flash', name: 'Gemini 1.5 Flash (Legacy)' },
 ];
 
 export const MOCK_EMAIL_STYLES = {

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { Resend } from 'resend';
 
-// 复用常量样式
+// 复用常量样式 (为了后端独立性，这里重新定义一遍，或者您可以从 @/constants 导入)
 const EMAIL_STYLES = {
   container: "font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f5;",
   header: "background-color: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;",
@@ -54,45 +54,41 @@ const generateEmailHtml = (data: any) => {
 
 export async function POST(request: Request) {
   try {
-    // --- 修改点：直接硬编码 Key，不再读取 process.env ---
-    const resendApiKey = 're_hC872nsy_5TcCgN2rjpKiRe6KfKMdA3NK';
+    const resendApiKey = process.env.RESEND_API_KEY;
     
-    // 初始化 Resend 客户端
+    if (!resendApiKey) {
+      console.error('Missing RESEND_API_KEY environment variable');
+      return NextResponse.json({ error: 'Server configuration error: Missing Resend API Key' }, { status: 500 });
+    }
+
     const resend = new Resend(resendApiKey);
 
     const body = await request.json();
-    const { recipient, digestData } = body;
+    const { recipients, digestData } = body;
 
-    if (!recipient || !digestData) {
-      return NextResponse.json({ error: 'Missing recipient or data' }, { status: 400 });
+    // 验证 recipients 必须是数组且不为空
+    if (!recipients || !Array.isArray(recipients) || recipients.length === 0 || !digestData) {
+      return NextResponse.json({ error: 'Missing recipients list or data' }, { status: 400 });
     }
 
     const htmlContent = generateEmailHtml(digestData);
 
-    // 发送邮件
     const { data, error } = await resend.emails.send({
-      from: 'Daily Pulse <onboarding@resend.dev>', // 免费版必须使用此发件人
-      to: [recipient], // 免费版只能发送给自己(注册Resend的邮箱)
+      from: 'Daily Pulse <digest@misaki1.de5.net>', // 使用配置好的域名
+      to: recipients, // Resend 支持直接传数组 (上限50)
       subject: `Daily Pulse - ${new Date().toLocaleDateString()}`,
       html: htmlContent,
     });
 
     if (error) {
       console.error('Resend API returned error:', error);
-      
-      // 针对 Resend 免费版常见限制进行友好提示
-      let friendlyError = error.message;
-      if (error.message.includes("domain") || error.name === 'validation_error' || error.message.includes("onboarding")) {
-          friendlyError = `Resend 免费版限制：您只能发送邮件到您注册 Resend 时的那个邮箱 (${recipient})。如需发送给他人，请在 Resend 后台绑定域名。`;
-      }
-
-      return NextResponse.json({ error: friendlyError }, { status: 500 });
+      return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
     return NextResponse.json({ success: true, id: data?.id });
 
-  } catch (error: any) {
+  } catch (error) {
     console.error('Email sending failed:', error);
-    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

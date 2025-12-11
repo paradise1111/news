@@ -6,13 +6,13 @@ interface PipelineViewProps {
   status: AppStatus;
   logs: LogEntry[];
   data: DigestData | null;
-  onTrigger: (email: string) => void;
+  onTrigger: (emails: string[]) => void;
   onReset: () => void;
 }
 
 const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigger, onReset }) => {
   const [activeTab, setActiveTab] = useState<'preview' | 'html'>('preview');
-  const [email, setEmail] = useState('');
+  const [emailInput, setEmailInput] = useState('');
 
   // Auto-scroll logs
   const logsEndRef = React.useRef<HTMLDivElement>(null);
@@ -61,33 +61,24 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
     `;
   };
 
-  const handleDownloadLogs = () => {
-    if (logs.length === 0) return;
-    
-    // Generate text content
-    const content = logs.map(l => `[${l.timestamp}] [${l.type.toUpperCase()}] ${l.message}`).join('\n');
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    
-    // Create download link
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `daily-pulse-logs-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.log`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
   const isProcessing = status === AppStatus.PROCESSING;
   const isComplete = status === AppStatus.COMPLETE && data;
 
   const handleRun = () => {
-    if (!email) {
-      alert("请输入测试接收邮箱");
+    if (!emailInput) {
+      alert("请输入接收邮箱");
       return;
     }
-    onTrigger(email);
+    
+    // Split by comma, semicolon, space, or newline and filter empty strings
+    const recipients = emailInput.split(/[,;\s\n]+/).map(s => s.trim()).filter(Boolean);
+
+    if (recipients.length === 0) {
+      alert("请输入有效的邮箱地址");
+      return;
+    }
+
+    onTrigger(recipients);
   };
 
   return (
@@ -104,11 +95,11 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
         
         <div className="flex gap-3 items-center ml-auto">
           <input 
-            type="email"
-            placeholder="输入测试邮箱..."
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-48"
+            type="text"
+            placeholder="输入邮箱 (多账号用逗号分隔)..."
+            value={emailInput}
+            onChange={(e) => setEmailInput(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-64"
             disabled={isProcessing}
           />
 
@@ -121,9 +112,9 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
           
           <button 
             onClick={handleRun}
-            disabled={isProcessing || !email}
+            disabled={isProcessing || !emailInput}
             className={`px-6 py-2 rounded-lg text-white font-semibold shadow-md transition-all flex items-center gap-2 whitespace-nowrap
-              ${(isProcessing || !email)
+              ${(isProcessing || !emailInput)
                 ? 'bg-gray-400 cursor-not-allowed' 
                 : 'bg-indigo-600 hover:bg-indigo-700 active:scale-95'}`}
           >
@@ -135,7 +126,7 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
              ) : (
                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
              )}
-             {isComplete ? '重新生成' : '开始运行'}
+             {isComplete ? '重新发送' : '开始运行'}
           </button>
         </div>
       </div>
@@ -146,19 +137,10 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
         <div className="lg:w-1/3 bg-gray-900 rounded-xl overflow-hidden flex flex-col shadow-lg border border-gray-800">
           <div className="bg-gray-800 px-4 py-2 flex items-center justify-between">
             <span className="text-gray-400 text-xs font-mono">系统日志</span>
-            <div className="flex items-center gap-3">
-              <button 
-                onClick={handleDownloadLogs}
-                title="下载日志文件"
-                className="text-gray-400 hover:text-white transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-              </button>
-              <div className="flex gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full bg-red-500/50"></div>
-                <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/50"></div>
-                <div className="w-2.5 h-2.5 rounded-full bg-green-500/50"></div>
-              </div>
+            <div className="flex gap-1.5">
+              <div className="w-2.5 h-2.5 rounded-full bg-red-500/50"></div>
+              <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/50"></div>
+              <div className="w-2.5 h-2.5 rounded-full bg-green-500/50"></div>
             </div>
           </div>
           <div className="flex-1 p-4 font-mono text-xs overflow-y-auto space-y-2 text-gray-300">
@@ -166,7 +148,7 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
             {logs.map((log, idx) => (
               <div key={idx} className="flex gap-2">
                 <span className="text-gray-500 shrink-0">[{log.timestamp}]</span>
-                <span className={`break-words ${
+                <span className={`${
                   log.type === 'error' ? 'text-red-400' : 
                   log.type === 'success' ? 'text-green-400' : 'text-blue-300'
                 }`}>
@@ -232,7 +214,7 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
                 </svg>
               </div>
               <p className="font-medium">暂无日报数据</p>
-              <p className="text-sm mt-1">请输入测试邮箱并点击“开始运行”</p>
+              <p className="text-sm mt-1">请输入邮箱列表并点击“开始运行”</p>
             </div>
           )}
         </div>
