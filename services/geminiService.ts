@@ -13,6 +13,14 @@ const createClient = (config: { apiKey: string; baseUrl?: string }) => {
     options.baseUrl = config.baseUrl.replace(/\/+$/, '');
   }
 
+  // HACK: Override the global fetch for this instance context if possible, 
+  // or rely on the SDK's internal fetch usage. 
+  // Since we can't easily pass a custom fetch to the constructor in all versions,
+  // we will try to be standard. 
+  // However, for 'sk-' keys, some proxies require 'Authorization: Bearer'.
+  // We can't easily inject this without patching fetch globally or if SDK supports it.
+  // We will rely on standard behavior first.
+  
   return new GoogleGenAI(options);
 };
 
@@ -56,11 +64,7 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
     throw new Error("Empty model list");
 
   } catch (listError: any) {
-    // CRITICAL CHANGE: As requested, if listing fails (common with proxies), 
-    // we simply return the default list and allow the user to proceed.
-    // We do NOT throw an error here, letting the user try 'generateContent' later.
     console.warn("Model listing failed or not supported by proxy. Using default model list.", listError.message);
-    
     return DEFAULT_MODELS;
   }
 };
@@ -72,9 +76,8 @@ export const generateDailyDigest = async (
   const ai = createClient({ apiKey: config.apiKey, baseUrl: config.baseUrl });
 
   onLog(`正在初始化模型: ${config.model}...`);
-  onLog("连接 Google Search 工具...");
 
-  // Optimized Prompt
+  // Prompt configuration
   const prompt = `
     You are an automated Daily Information Digest agent.
     
@@ -109,9 +112,38 @@ export const generateDailyDigest = async (
     }
   `;
 
-  onLog("正在执行搜索任务 (目标: 10条热点 + 10条健康资讯)...");
-  
+  // Helper to process response text
+  const processResponseText = (text: string | undefined): DigestData => {
+    if (!text) throw new Error("未能从 Gemini 接收到数据 (Empty Response)。");
+
+    if (text.includes("```json")) {
+        text = text.replace(/```json/g, "").replace(/```/g, "");
+    } else if (text.includes("```")) {
+        text = text.replace(/```/g, "");
+    }
+    text = text.trim();
+
+    try {
+        return JSON.parse(text);
+    } catch (parseError) {
+        console.warn("Direct JSON parse failed, attempting regex extraction", parseError);
+        const jsonMatch = text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            try {
+                return JSON.parse(jsonMatch[0]);
+            } catch (e) {
+                throw new Error("无法解析返回的数据格式 (JSON Invalid)");
+            }
+        } else {
+             throw new Error("无法解析返回的数据格式 (No JSON found)");
+        }
+    }
+  };
+
+  // --- Attempt 1: With Google Search Tools ---
   try {
+    onLog("尝试连接 Google Search 工具进行增强搜索...");
+    
     const response = await ai.models.generateContent({
       model: config.model,
       contents: prompt,
@@ -122,46 +154,49 @@ export const generateDailyDigest = async (
     });
 
     onLog("正在处理搜索结果...");
-    let text = response.text;
-    
-    if (!text) {
-      throw new Error("未能从 Gemini 接收到数据。");
-    }
-
-    if (text.includes("```json")) {
-        text = text.replace(/```json/g, "").replace(/```/g, "");
-    } else if (text.includes("```")) {
-        text = text.replace(/```/g, "");
-    }
-    text = text.trim();
-
-    onLog("正在解析深度内容...");
-    let data: DigestData;
-    
-    try {
-        data = JSON.parse(text);
-    } catch (parseError) {
-        console.warn("Direct JSON parse failed, attempting regex extraction", parseError);
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            try {
-                data = JSON.parse(jsonMatch[0]);
-            } catch (e) {
-                throw new Error("无法解析返回的数据格式 (JSON Invalid)");
-            }
-        } else {
-             throw new Error("无法解析返回的数据格式 (No JSON found)");
-        }
-    }
-    
+    const data = processResponseText(response.text);
     if (!data.social) data.social = [];
     if (!data.health) data.health = [];
-
+    
     onLog(`内容生成完成 (社交: ${data.social.length}条, 健康: ${data.health.length}条)。`);
     return data;
 
-  } catch (error) {
-    onLog(`生成过程中出错: ${error instanceof Error ? error.message : '未知错误'}`);
-    throw error;
+  } catch (error: any) {
+    // --- Fallback: Retry WITHOUT tools ---
+    // Many proxies ("New API", "OneAPI") do not support the googleSearch tool and return 400/500 errors.
+    // If we hit an error, we strip the tools and retry, asking the model to use its internal knowledge.
+    
+    onLog(`增强模式失败 (${error.message || 'Unknown Error'})。`);
+    onLog("正在尝试降级模式 (不使用 Google Search 工具)...");
+    
+    // Modify prompt slightly to acknowledge lack of real-time search
+    const fallbackPrompt = prompt + `
+    
+    [IMPORTANT NOTE]
+    Since you cannot access real-time search tools right now, please generate this digest based on your **latest available knowledge cutoff** or simulated trending data. 
+    Make sure the content is realistic and high-quality, even if not strictly "live" from today.
+    `;
+
+    try {
+        // Fallback options: try without tools
+        const response = await ai.models.generateContent({
+          model: config.model,
+          contents: fallbackPrompt,
+          config: {
+            // Remove tools
+            systemInstruction: "You are a professional news analyst.",
+          },
+        });
+
+        const data = processResponseText(response.text);
+        if (!data.social) data.social = [];
+        if (!data.health) data.health = [];
+
+        onLog(`降级模式生成成功 (注意：数据可能不是实时联网的)。`);
+        return data;
+    } catch (fallbackError: any) {
+        onLog(`降级模式也失败了: ${fallbackError.message}`);
+        throw fallbackError;
+    }
   }
 };
