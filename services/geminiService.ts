@@ -14,7 +14,7 @@ const normalizeBaseUrl = (url: string): string => {
   return cleaned;
 };
 
-// Generic Fetcher for OpenAI-Compatible APIs
+// Generic Fetcher for OpenAI-Compatible APIs via Internal Proxy
 const openAIFetch = async (
   baseUrl: string,
   apiKey: string,
@@ -23,36 +23,35 @@ const openAIFetch = async (
   method: string = 'POST'
 ) => {
   const normalizedBase = normalizeBaseUrl(baseUrl);
-  const url = `${normalizedBase}${endpoint}`;
+  const targetUrl = `${normalizedBase}${endpoint}`;
 
-  console.log(`[API Request] ${method} ${url}`);
+  console.log(`[Proxy Request] -> ${method} ${targetUrl}`);
 
-  const headers: HeadersInit = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${apiKey}`
-  };
-
-  const config: RequestInit = {
-    method,
-    headers,
-  };
-
-  if (body) {
-    config.body = JSON.stringify(body);
-  }
-
+  // 使用我们刚刚创建的本地 Next.js 代理 (/api/proxy)
+  // 这可以解决浏览器直接请求第三方 API 时的 CORS (NetworkError) 问题
   try {
-    const response = await fetch(url, config);
-    
+    const response = await fetch('/api/proxy', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        url: targetUrl,
+        method,
+        // 将 Headers 传递给服务端代理，由服务端带上
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`
+        },
+        body: body 
+      }),
+    });
+
     if (!response.ok) {
-       const errorText = await response.text();
-       // Try to parse error JSON if possible
-       try {
-           const errorJson = JSON.parse(errorText);
-           throw new Error(errorJson.error?.message || `HTTP ${response.status}: ${errorText}`);
-       } catch (e) {
-           throw new Error(`HTTP ${response.status} at ${url}: ${errorText}`);
-       }
+       // 尝试解析错误信息
+       const errorJson = await response.json().catch(() => ({ error: response.statusText }));
+       // 如果是 500 且包含 "Proxy Connection Failed"，说明连不上代理地址
+       throw new Error(errorJson.error || `HTTP ${response.status}`);
     }
 
     return await response.json();
@@ -112,7 +111,7 @@ export const generateDailyDigest = async (
   config: AppConfig, 
   onLog: (msg: string) => void
 ): Promise<DigestData> => {
-  onLog(`正在初始化 (API 模式: OpenAI 兼容, 模型: ${config.model})...`);
+  onLog(`正在初始化 (API 模式: OpenAI 兼容 / 代理中转, 模型: ${config.model})...`);
 
   const prompt = `
     You are an automated Daily Information Digest agent.
@@ -164,12 +163,12 @@ export const generateDailyDigest = async (
     
     // First attempt with JSON mode
     try {
-        onLog("发送请求中 (尝试启用 JSON 模式)...");
+        onLog("发送请求中 (通过服务端代理)...");
         responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
     } catch(err: any) {
         // If the provider doesn't support response_format (400 Bad Request), retry without it
         if (err.message.includes("response_format") || err.message.includes("400") || err.message.includes("not supported")) {
-            onLog("当前模型/平台不支持 strict JSON 模式，正在降级重试...");
+            onLog("API 不支持 strict JSON 模式，正在降级重试...");
             delete payload.response_format;
             responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
         } else {
