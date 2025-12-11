@@ -6,13 +6,13 @@ interface PipelineViewProps {
   status: AppStatus;
   logs: LogEntry[];
   data: DigestData | null;
-  onTrigger: (email: string) => void;
+  onTrigger: (emails: string[]) => void;
   onReset: () => void;
 }
 
 const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigger, onReset }) => {
   const [activeTab, setActiveTab] = useState<'preview' | 'html'>('preview');
-  const [email, setEmail] = useState('');
+  const [emailInput, setEmailInput] = useState('');
 
   // Auto-scroll logs
   const logsEndRef = React.useRef<HTMLDivElement>(null);
@@ -83,11 +83,23 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
   const isComplete = status === AppStatus.COMPLETE && data;
 
   const handleRun = () => {
-    if (!email) {
-      alert("请输入测试接收邮箱");
+    if (!emailInput) {
+      alert("请输入接收邮箱");
       return;
     }
-    onTrigger(email);
+
+    // 解析输入的邮箱，支持逗号、分号、空格或换行分隔
+    const recipients = emailInput
+      .split(/[,;\s\n]+/)
+      .map(e => e.trim())
+      .filter(e => e.length > 0);
+
+    if (recipients.length === 0) {
+      alert("请输入有效的邮箱地址");
+      return;
+    }
+
+    onTrigger(recipients);
   };
 
   return (
@@ -102,13 +114,13 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
           </span>
         </div>
         
-        <div className="flex gap-3 items-center ml-auto">
+        <div className="flex gap-3 items-center ml-auto flex-wrap justify-end">
           <input 
-            type="email"
-            placeholder="输入测试邮箱..."
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-48"
+            type="text"
+            placeholder="输入邮箱 (多账号用逗号分隔)..."
+            value={emailInput}
+            onChange={(e) => setEmailInput(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-64"
             disabled={isProcessing}
           />
 
@@ -121,9 +133,9 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
           
           <button 
             onClick={handleRun}
-            disabled={isProcessing || !email}
+            disabled={isProcessing || !emailInput}
             className={`px-6 py-2 rounded-lg text-white font-semibold shadow-md transition-all flex items-center gap-2 whitespace-nowrap
-              ${(isProcessing || !email)
+              ${(isProcessing || !emailInput)
                 ? 'bg-gray-400 cursor-not-allowed' 
                 : 'bg-indigo-600 hover:bg-indigo-700 active:scale-95'}`}
           >
@@ -135,7 +147,7 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
              ) : (
                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
              )}
-             {isComplete ? '重新生成' : '开始运行'}
+             {isComplete ? '重新发送' : '开始运行'}
           </button>
         </div>
       </div>
@@ -232,7 +244,7 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
                 </svg>
               </div>
               <p className="font-medium">暂无日报数据</p>
-              <p className="text-sm mt-1">请输入测试邮箱并点击“开始运行”</p>
+              <p className="text-sm mt-1">请输入邮箱列表并点击“开始运行”</p>
             </div>
           )}
         </div>

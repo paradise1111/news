@@ -23,7 +23,7 @@ const App: React.FC = () => {
     addLog("配置已加载。成功连接到 Gemini API。", 'success');
   };
 
-  const handleTriggerPipeline = async (targetEmail: string) => {
+  const handleTriggerPipeline = async (recipients: string[]) => {
     if (!config) return;
 
     setStatus(AppStatus.PROCESSING);
@@ -32,12 +32,18 @@ const App: React.FC = () => {
 
     try {
       // Step 1: Generate Data (The "Brain")
-      const data = await generateDailyDigest(config, (msg) => addLog(msg, 'info'));
-      setDigestData(data);
-      addLog("任务完成，预览就绪。", 'success');
+      // 如果已经有数据，复用数据（只发邮件）
+      let data = digestData;
+      if (!data) {
+        data = await generateDailyDigest(config, (msg) => addLog(msg, 'info'));
+        setDigestData(data);
+        addLog("任务完成，预览就绪。", 'success');
+      } else {
+        addLog("使用已有的日报数据进行发送。", 'info');
+      }
       
       // Step 2: Delivery (Real Backend vs Simulation)
-      addLog(`准备推送邮件至: ${targetEmail}`, 'info');
+      addLog(`准备推送邮件至 ${recipients.length} 位收件人: ${recipients.join(', ')}`, 'info');
 
       try {
         // 尝试调用真实的后端 API
@@ -49,7 +55,7 @@ const App: React.FC = () => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            recipient: targetEmail,
+            recipients: recipients, // 传递数组
             digestData: data, // 发送原始数据，让后端生成 HTML
           }),
         });
@@ -80,12 +86,12 @@ const App: React.FC = () => {
         await new Promise(resolve => setTimeout(resolve, 1000));
         
         const mockPayload = {
-          recipient: targetEmail,
+          recipients: recipients,
           subject: `Daily Pulse - ${new Date().toLocaleDateString()}`,
           content_json_length: JSON.stringify(data).length
         };
         console.log(">>> [MOCK] WOULD POST TO /api/digest:", mockPayload);
-        addLog("(模拟) 邮件已送达虚拟网关 [200 OK]", 'success');
+        addLog(`(模拟) 邮件已送达虚拟网关，收件人数: ${recipients.length}`, 'success');
       }
       
       setStatus(AppStatus.COMPLETE);
