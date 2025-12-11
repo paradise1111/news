@@ -4,14 +4,14 @@ import { DEFAULT_MODELS } from "../constants";
 
 // Helper to create a client with dynamic configuration
 const createClient = (config: { apiKey: string; baseUrl?: string }) => {
-  // Cast options to any to allow custom baseUrl which might not be in the strict type definition
-  // This is necessary because the official TS types might not expose baseUrl/rootUrl despite the SDK supporting it.
   const options: any = {
     apiKey: config.apiKey
   };
   
   if (config.baseUrl) {
-    options.baseUrl = config.baseUrl;
+    // Clean the Base URL: remove trailing slashes to avoid double-slashing in SDK path construction
+    // Many proxies expect the root, e.g. https://api.proxy.com, and SDK appends /v1beta/models
+    options.baseUrl = config.baseUrl.replace(/\/+$/, '');
   }
 
   return new GoogleGenAI(options);
@@ -29,7 +29,6 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
     
     if (response && response.models) {
       // Filter only for models that support content generation
-      // We do NOT filter by name (e.g. 'gemini') to support all available models on the endpoint
       const models = response.models
         .filter((m: any) => 
           m.supportedGenerationMethods?.includes('generateContent')
@@ -42,7 +41,7 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
           };
         });
 
-      // Sort models: Flash and Pro versions first for convenience, but keep others
+      // Sort models: Flash and Pro versions first
       models.sort((a: any, b: any) => {
         const score = (str: string) => {
           const s = str.toLowerCase();
@@ -54,38 +53,43 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
       });
 
       console.log(`Successfully fetched ${models.length} models from API.`);
-      
-      // Strictly return the models found on the website/API. 
-      // If the API returns an empty list (but valid 200 OK), we return an empty list.
-      return models;
+      return models.length > 0 ? models : DEFAULT_MODELS;
     }
     
-    // If response structure is unexpected
     throw new Error("Invalid response structure from Model List API");
 
-  } catch (listError) {
-    console.warn("Model listing failed, attempting fallback verification", listError);
+  } catch (listError: any) {
+    console.warn("Model listing failed, attempting fallback verification:", listError.message);
     
-    // Fallback: Verify key by generating a single token with a standard model
-    // This handles cases where 'ListModels' permission is missing but 'GenerateContent' is allowed.
-    // Only in this error case do we fall back to the hardcoded list.
-    const fallbackModels = ['gemini-2.5-flash', 'gemini-1.5-flash'];
+    // Fallback: Verify key by generating a single token with standard models
+    // Extended list to support various "New API" / Proxy configurations that might map specific model names
+    const fallbackModels = [
+        'gemini-2.5-flash', 
+        'gemini-1.5-flash', 
+        'gemini-1.5-pro',
+        'gemini-pro',
+        'gemini-flash'
+    ];
+    
+    let lastError = null;
     
     for (const model of fallbackModels) {
         try {
+            console.log(`Fallback: Verifying with ${model}...`);
             await ai.models.generateContent({
                 model: model,
-                contents: 'Ping',
+                contents: { parts: [{ text: 'Ping' }] },
             });
             console.log("Fallback verification successful using " + model);
             return DEFAULT_MODELS;
-        } catch (verifyError) {
-            console.warn(`Verification failed for ${model}:`, verifyError);
-            // Continue to next model
+        } catch (verifyError: any) {
+            console.warn(`Verification failed for ${model}:`, verifyError.message);
+            lastError = verifyError;
         }
     }
     
-    throw new Error("Connection failed: Unable to connect to Gemini API with standard models. Please check your API Key.");
+    const errorDetails = lastError ? `Details: ${lastError.message}` : 'Check console for logs.';
+    throw new Error(`无法连接到 API。已尝试多种模型均失败。请检查 Base URL 格式是否正确 (通常不需要 /v1 后缀) 以及 API Key 是否有效。 ${errorDetails}`);
   }
 };
 
@@ -98,15 +102,13 @@ export const generateDailyDigest = async (
   onLog(`正在初始化模型: ${config.model}...`);
   onLog("连接 Google Search 工具...");
 
-  // Optimized Prompt:
-  // 1. Requests exactly 10 items for Social and 10 items for Health.
-  // 2. Enforces strict URL validity to fix broken links.
+  // Optimized Prompt
   const prompt = `
     You are an automated Daily Information Digest agent.
     
     ### Task 1: Social Media & Trends (The "Pulse")
     - **Goal**: Identify the TOP 10 trending topics/news today.
-    - **Search Strategy**: DO NOT try to access x.com (Twitter) or youtube.com directly as they require login. 
+    - **Search Strategy**: DO NOT try to access x.com (Twitter) or youtube.com directly. 
     - **Instead, search for**: "top 10 trending topics on Twitter today summary", "viral YouTube videos today news report", and "tech news summaries today".
     - **Filter**: Ignore minor celebrity gossip. Focus on tech news, major cultural memes, or significant global discussions.
     - **Quantity**: Provide EXACTLY 10 distinct items.
@@ -120,7 +122,7 @@ export const generateDailyDigest = async (
     ### Output Requirements (CRITICAL)
     1. **Depth**: Each English summary must be substantial (approx 60-80 words). Explain context, impact, and why it matters.
     2. **Translation**: Provide a fluent, professional Chinese translation of that summary.
-    3. **Links**: The 'source_url' field MUST be a valid, absolute HTTP/HTTPS URL (e.g., "https://www.bbc.com/news/..."). DO NOT generate fake URLs or relative paths. Use the actual URLs found by the Google Search tool.
+    3. **Links**: The 'source_url' field MUST be a valid, absolute HTTP/HTTPS URL. Use actual URLs found by Google Search.
     4. **Format**: Return the result STRICTLY as a JSON object.
 
     The JSON structure must be:
@@ -142,9 +144,8 @@ export const generateDailyDigest = async (
       model: config.model,
       contents: prompt,
       config: {
-        tools: [{ googleSearch: {} }], // Enable grounding
-        // Note: responseMimeType and responseSchema are NOT supported when using tools like googleSearch.
-        systemInstruction: "You are a professional news analyst. You provide deep insights, not just headlines. You verify facts via Google Search before summarizing.",
+        tools: [{ googleSearch: {} }],
+        systemInstruction: "You are a professional news analyst. You verify facts via Google Search before summarizing.",
       },
     });
 
@@ -155,7 +156,6 @@ export const generateDailyDigest = async (
       throw new Error("未能从 Gemini 接收到数据。");
     }
 
-    // Clean up potential Markdown code blocks
     if (text.includes("```json")) {
         text = text.replace(/```json/g, "").replace(/```/g, "");
     } else if (text.includes("```")) {
@@ -170,7 +170,6 @@ export const generateDailyDigest = async (
         data = JSON.parse(text);
     } catch (parseError) {
         console.warn("Direct JSON parse failed, attempting regex extraction", parseError);
-        // Fallback extraction
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
             try {
@@ -183,7 +182,6 @@ export const generateDailyDigest = async (
         }
     }
     
-    // Safety checks
     if (!data.social) data.social = [];
     if (!data.health) data.health = [];
 
