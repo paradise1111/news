@@ -5,8 +5,6 @@ import { DEFAULT_MODELS } from "../constants";
 const normalizeBaseUrl = (url: string): string => {
   let cleaned = url.trim().replace(/\/+$/, '');
   
-  // Many "One API" users forget the /v1 suffix. 
-  // If it's not present, we append it to follow OpenAI standards.
   if (!cleaned.endsWith('/v1')) {
       console.log(`[Auto-Fix] Appending /v1 to Base URL: ${cleaned} -> ${cleaned}/v1`);
       return `${cleaned}/v1`;
@@ -27,12 +25,11 @@ const openAIFetch = async (
 
   console.log(`[Proxy Request] -> ${method} ${targetUrl}`);
 
-  // 使用 AbortController 设置明确的超时
+  // 120秒客户端超时 (因为服务端现在有 Keep-Alive，我们可以等更久)
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 90000); // 90秒超时
+  const timeoutId = setTimeout(() => controller.abort(), 120000); 
 
   try {
-    // 这里的结构必须匹配 app/api/proxy/route.ts 的要求
     const response = await fetch('/api/proxy', {
       method: 'POST',
       headers: {
@@ -40,9 +37,8 @@ const openAIFetch = async (
       },
       signal: controller.signal,
       body: JSON.stringify({
-        targetUrl: targetUrl, // 注意：参数名改为 targetUrl 以匹配通用代理脚本
+        targetUrl: targetUrl,
         method,
-        // 将 Headers 传递给服务端代理，由服务端带上
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiKey}`
@@ -54,31 +50,77 @@ const openAIFetch = async (
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-       // 尝试解析错误信息
        const errorText = await response.text();
        let errorJson;
-       try {
-           errorJson = JSON.parse(errorText);
-       } catch {
-           errorJson = { error: errorText || response.statusText };
-       }
-       
+       try { errorJson = JSON.parse(errorText); } catch { errorJson = { error: errorText || response.statusText }; }
        throw new Error(`Proxy Error (${response.status}): ${errorJson.error || JSON.stringify(errorJson)}`);
     }
 
+    // --- 处理 SSE (Server-Sent Events) 响应 ---
+    // 代理现在返回 text/event-stream 以保持连接活跃
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('text/event-stream')) {
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error("ReadableStream not supported");
+        
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let finalJsonString = '';
+        let hasError = false;
+        let errorMessage = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            // 保留最后一个可能不完整的片段
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    // 代理发送的数据是 JSON.stringify 过的字符串，所以需要解析一次得到原始 JSON 字符串
+                    try {
+                        const rawSegment = JSON.parse(line.substring(6));
+                        finalJsonString += rawSegment;
+                    } catch (e) {
+                        console.warn("Parse warning on SSE chunk:", line);
+                    }
+                } else if (line.startsWith('event: error')) {
+                    hasError = true;
+                } else if (hasError && line.startsWith('data: ')) {
+                    // 如果前一行是 event: error，这一行就是错误详情
+                    try {
+                        const errObj = JSON.parse(line.substring(6));
+                        errorMessage = errObj.error || "Proxy Upstream Error";
+                    } catch {
+                        errorMessage = line.substring(6);
+                    }
+                }
+            }
+        }
+
+        if (hasError || errorMessage) {
+            throw new Error(errorMessage || "Stream Error");
+        }
+        
+        if (!finalJsonString) {
+            throw new Error("Stream closed without data");
+        }
+
+        return JSON.parse(finalJsonString);
+    } 
+    
+    // 降级：如果不是 SSE，按普通 JSON 处理
     return await response.json();
+
   } catch (error: any) {
       clearTimeout(timeoutId);
       
-      // 区分超时、网络错误和普通错误
       if (error.name === 'AbortError') {
           console.error("Fetch Timeout:", targetUrl);
-          throw new Error("请求超时 (90秒)。模型生成内容过长或上游响应过慢。");
-      }
-      
-      if (error.message && error.message.includes("NetworkError")) {
-          console.error("Network Error - Proxy Unreachable");
-          throw new Error("网络错误: 无法连接到内部代理 (/api/proxy)。请检查 Vercel 部署状态。");
+          throw new Error("请求超时 (120秒)。即便有心跳保活，任务依然耗时过长。");
       }
       
       console.error("Fetch Error Detail:", error);
@@ -94,7 +136,6 @@ export const checkModelAvailability = async (
 ): Promise<{ available: boolean; latency?: number; error?: string }> => {
   const start = Date.now();
   try {
-    // Send a minimal request to test connectivity
     await openAIFetch(baseUrl, apiKey, '/chat/completions', {
       model: modelId,
       messages: [{ role: "user", content: "Hi" }],
@@ -112,11 +153,10 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
     console.log("Fetching models list from OpenAI-compatible endpoint...");
     const data = await openAIFetch(baseUrl, apiKey, '/models', undefined, 'GET');
     
-    // OpenAI format: { object: "list", data: [ { id: "...", ... } ] }
     if (data && Array.isArray(data.data)) {
         const models = data.data.map((m: any) => ({
             id: m.id,
-            name: m.id, // OpenAI list endpoint usually just gives IDs
+            name: m.id,
             status: 'unknown'
         }));
         console.log(`Fetched ${models.length} models.`);
@@ -136,7 +176,7 @@ export const generateDailyDigest = async (
   config: AppConfig, 
   onLog: (msg: string) => void
 ): Promise<DigestData> => {
-  onLog(`正在初始化 (API 模式: OpenAI 兼容 / 边缘代理, 模型: ${config.model})...`);
+  onLog(`正在初始化 (API 模式: OpenAI 兼容 / 边缘心跳代理, 模型: ${config.model})...`);
 
   // Prompt updated to enforce using the search tool
   const prompt = `
@@ -171,7 +211,6 @@ export const generateDailyDigest = async (
     }
   `;
 
-  // Construct OpenAI-style payload
   const payload: any = {
     model: config.model,
     messages: [
@@ -184,30 +223,24 @@ export const generateDailyDigest = async (
           content: prompt 
       }
     ],
-    // Enable Google Search Grounding
-    // Note: This specific format { googleSearch: {} } is supported by Gemini APIs and many proxies.
     tools: [
         { googleSearch: {} }
     ],
-    // Some providers support JSON mode to guarantee valid JSON
     response_format: { type: "json_object" }
   };
 
   try {
     let responseData;
     
-    // First attempt with JSON mode and Tools
     try {
         onLog("发送请求中 (已启用 Google Search 联网)...");
         responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
     } catch(err: any) {
-        // Fallback 1: If tools/googleSearch causes error (400), try removing tools but keep JSON mode
         if (err.message.includes("tool") || err.message.includes("googleSearch") || err.message.includes("400")) {
              onLog("警告: 当前 API 渠道似乎不支持 Google Search 工具，正在尝试降级 (可能导致无真实链接)...");
              delete payload.tools;
              responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
         }
-        // Fallback 2: If response_format causes error
         else if (err.message.includes("response_format")) {
             onLog("API 不支持 strict JSON 模式，正在降级重试...");
             delete payload.response_format;
@@ -225,9 +258,7 @@ export const generateDailyDigest = async (
 
     onLog("接收到数据，正在解析...");
 
-    // JSON Parsing Logic
     let text = content.trim();
-    // Remove Markdown code blocks if present
     if (text.includes("```json")) {
         text = text.replace(/```json/g, "").replace(/```/g, "");
     } else if (text.includes("```")) {
@@ -247,7 +278,6 @@ export const generateDailyDigest = async (
         }
     }
 
-    // Ensure structure
     if (!data.social) data.social = [];
     if (!data.health) data.health = [];
 
