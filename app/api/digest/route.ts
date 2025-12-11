@@ -1,11 +1,7 @@
 import { NextResponse } from 'next/server';
 import { Resend } from 'resend';
 
-// 注意：你需要先运行 `npm install resend`
-// 并在 .env.local 中配置 RESEND_API_KEY
-const resend = new Resend(process.env.RESEND_API_KEY);
-
-// 复用常量样式 (为了后端独立性，这里重新定义一遍，或者您可以从 @/constants 导入)
+// 复用常量样式
 const EMAIL_STYLES = {
   container: "font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f5;",
   header: "background-color: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;",
@@ -58,6 +54,12 @@ const generateEmailHtml = (data: any) => {
 
 export async function POST(request: Request) {
   try {
+    // --- 修改点：直接硬编码 Key，不再读取 process.env ---
+    const resendApiKey = 're_hC872nsy_5TcCgN2rjpKiRe6KfKMdA3NK';
+    
+    // 初始化 Resend 客户端
+    const resend = new Resend(resendApiKey);
+
     const body = await request.json();
     const { recipient, digestData } = body;
 
@@ -67,17 +69,30 @@ export async function POST(request: Request) {
 
     const htmlContent = generateEmailHtml(digestData);
 
-    const data = await resend.emails.send({
-      from: 'Daily Pulse <onboarding@resend.dev>', // 这里需要改成您在 Resend 验证过的域名
-      to: [recipient],
+    // 发送邮件
+    const { data, error } = await resend.emails.send({
+      from: 'Daily Pulse <onboarding@resend.dev>', // 免费版必须使用此发件人
+      to: [recipient], // 免费版只能发送给自己(注册Resend的邮箱)
       subject: `Daily Pulse - ${new Date().toLocaleDateString()}`,
       html: htmlContent,
     });
 
-    return NextResponse.json({ success: true, id: data.id });
+    if (error) {
+      console.error('Resend API returned error:', error);
+      
+      // 针对 Resend 免费版常见限制进行友好提示
+      let friendlyError = error.message;
+      if (error.message.includes("domain") || error.name === 'validation_error' || error.message.includes("onboarding")) {
+          friendlyError = `Resend 免费版限制：您只能发送邮件到您注册 Resend 时的那个邮箱 (${recipient})。如需发送给他人，请在 Resend 后台绑定域名。`;
+      }
 
-  } catch (error) {
+      return NextResponse.json({ error: friendlyError }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true, id: data?.id });
+
+  } catch (error: any) {
     console.error('Email sending failed:', error);
-    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
   }
 }

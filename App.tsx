@@ -41,7 +41,6 @@ const App: React.FC = () => {
 
       try {
         // 尝试调用真实的后端 API
-        // 注意：这需要您部署了 Next.js 后端且配置了 Resend Key 才会成功
         addLog("正在连接后端 API (/api/digest)...", 'info');
         
         const response = await fetch('/api/digest', {
@@ -55,19 +54,28 @@ const App: React.FC = () => {
           }),
         });
 
+        const resData = await response.json();
+
         if (response.ok) {
-           const resData = await response.json();
-           addLog(`后端发送成功! ID: ${resData.id}`, 'success');
+           addLog(`后端发送成功! Resend ID: ${resData.id}`, 'success');
         } else {
-           // 如果 API 返回 404 (未部署) 或 500 (配置错误)，抛出异常进入模拟流程
-           throw new Error(`API 响应错误: ${response.status}`);
+           // 如果 API 返回错误
+           const errorMsg = resData.error || response.statusText;
+           throw new Error(errorMsg);
         }
 
-      } catch (backendError) {
+      } catch (backendError: any) {
         console.warn("Backend API unavailable, falling back to simulation.", backendError);
-        // --- 降级方案：模拟演示 ---
-        addLog("注意：后端 API 未连接或报错 (演示模式)", 'error');
-        addLog("正在模拟发送过程...", 'info');
+        
+        // --- 错误处理与降级 ---
+        addLog(`❌ 真实发送失败: ${backendError.message}`, 'error');
+        
+        if (backendError.message.includes("RESEND_API_KEY")) {
+            addLog("提示: 请在 Vercel 环境变量中配置 RESEND_API_KEY。", 'info');
+        }
+
+        // 仅当非配置错误时才演示
+        addLog("正在切换至演示模式 (Simulated Mode)...", 'info');
         
         await new Promise(resolve => setTimeout(resolve, 1000));
         
@@ -77,7 +85,7 @@ const App: React.FC = () => {
           content_json_length: JSON.stringify(data).length
         };
         console.log(">>> [MOCK] WOULD POST TO /api/digest:", mockPayload);
-        addLog("(模拟) 邮件已送达 Resend 网关 [200 OK]", 'success');
+        addLog("(模拟) 邮件已送达虚拟网关 [200 OK]", 'success');
       }
       
       setStatus(AppStatus.COMPLETE);

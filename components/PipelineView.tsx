@@ -61,6 +61,24 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
     `;
   };
 
+  const handleDownloadLogs = () => {
+    if (logs.length === 0) return;
+    
+    // Generate text content
+    const content = logs.map(l => `[${l.timestamp}] [${l.type.toUpperCase()}] ${l.message}`).join('\n');
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    
+    // Create download link
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `daily-pulse-logs-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.log`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const isProcessing = status === AppStatus.PROCESSING;
   const isComplete = status === AppStatus.COMPLETE && data;
 
@@ -128,10 +146,19 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
         <div className="lg:w-1/3 bg-gray-900 rounded-xl overflow-hidden flex flex-col shadow-lg border border-gray-800">
           <div className="bg-gray-800 px-4 py-2 flex items-center justify-between">
             <span className="text-gray-400 text-xs font-mono">系统日志</span>
-            <div className="flex gap-1.5">
-              <div className="w-2.5 h-2.5 rounded-full bg-red-500/50"></div>
-              <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/50"></div>
-              <div className="w-2.5 h-2.5 rounded-full bg-green-500/50"></div>
+            <div className="flex items-center gap-3">
+              <button 
+                onClick={handleDownloadLogs}
+                title="下载日志文件"
+                className="text-gray-400 hover:text-white transition-colors"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+              </button>
+              <div className="flex gap-1.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-red-500/50"></div>
+                <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/50"></div>
+                <div className="w-2.5 h-2.5 rounded-full bg-green-500/50"></div>
+              </div>
             </div>
           </div>
           <div className="flex-1 p-4 font-mono text-xs overflow-y-auto space-y-2 text-gray-300">
@@ -139,7 +166,7 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
             {logs.map((log, idx) => (
               <div key={idx} className="flex gap-2">
                 <span className="text-gray-500 shrink-0">[{log.timestamp}]</span>
-                <span className={`${
+                <span className={`break-words ${
                   log.type === 'error' ? 'text-red-400' : 
                   log.type === 'success' ? 'text-green-400' : 'text-blue-300'
                 }`}>

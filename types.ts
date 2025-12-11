@@ -30,3 +30,10 @@ export interface LogEntry {
   message: string;
   type: 'info' | 'success' | 'error';
 }
+
+export interface ModelOption {
+  id: string;
+  name: string;
+  status?: 'unknown' | 'testing' | 'available' | 'unavailable'; // For UI testing
+  latency?: number;
+}
