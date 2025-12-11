@@ -41,7 +41,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
   const handleConnect = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!apiKey) {
-      setError("API Key is required");
+      setError("Token / Key is required");
       return;
     }
 
@@ -49,6 +49,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
     setError(null);
 
     try {
+      // Try to fetch models using the provided token/url
       const models = await verifyAndFetchModels(apiKey, baseUrl);
       
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ apiKey, baseUrl }));
@@ -66,6 +67,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
       setStep('model');
     } catch (err: any) {
       console.warn("Connection warning:", err);
+      // Fallback to default list if listing fails (common with some proxies)
       setAvailableModels(DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption)));
       setModel(DEFAULT_MODELS[0].id);
       setStep('model');
@@ -139,7 +141,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
     
     setIsTesting(false);
     if (successCount === 0) {
-        setError("所有模型测试均失败。请检查 API Key 是否有效，或 Base URL 是否正确。");
+        setError("所有模型测试均失败。请检查令牌 (Token) 是否正确，或 Base URL 是否匹配该令牌。");
     } else {
         setTestResult(`测试完成。共发现 ${successCount} 个可用模型。`);
     }
@@ -166,7 +168,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
       <div className="text-center mb-6 shrink-0">
         <h2 className="text-2xl font-bold text-gray-800">Daily Pulse Setup</h2>
         <p className="text-gray-500 text-sm mt-2">
-          {step === 'credentials' ? '连接 Gemini API' : '模型连通性测试'}
+          {step === 'credentials' ? '配置 API 令牌' : '模型连通性测试'}
         </p>
       </div>
 
@@ -174,29 +176,34 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
         <form onSubmit={handleConnect} className="space-y-6 animate-fadeIn overflow-y-auto p-1">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Gemini API Key
+              服务令牌 (Token) / API Key
             </label>
             <input
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder="AIzaSy..."
+              placeholder="输入服务商令牌 (如 sk-...) 或 Google API Key..."
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
             />
+            <p className="text-xs text-gray-400 mt-1">
+              如果您使用的是第三方中转/公益服务，请在此填入对应的 Token。
+            </p>
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Base URL (代理地址)
+              Base URL (服务商地址)
             </label>
             <input
               type="text"
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://... (无需 /v1beta)"
+              placeholder="https://proxy.example.com (使用 Token 时必填)"
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
             />
-            <p className="text-xs text-gray-400 mt-1">注意：如果 API 提示 404，尝试移除 URL 末尾的 `/v1` 或 `/v1beta`。</p>
+            <p className="text-xs text-gray-400 mt-1">
+              注意：使用第三方 Token 时，必须填写对应的 Base URL，否则会请求失败。
+            </p>
           </div>
 
           <button
@@ -205,7 +212,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
             className={`w-full py-3 rounded-lg text-white font-semibold shadow-md transition-all 
               ${isValidating ? 'bg-blue-400 cursor-wait' : 'bg-blue-600 hover:bg-blue-700 active:scale-95'}`}
           >
-            {isValidating ? '连接中...' : '下一步'}
+            {isValidating ? '验证连接...' : '下一步'}
           </button>
         </form>
       ) : (
@@ -243,7 +250,9 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
           </div>
           
           <div className="flex items-center justify-between shrink-0">
-             <span className="text-xs text-gray-500">建议先点击右侧按钮测试所有模型 &rarr;</span>
+             <span className="text-xs text-gray-500">
+               {availableModels.length > 0 ? `检测到 ${availableModels.length} 个候选模型` : '未检测到模型列表，建议全量扫描'}
+             </span>
              <button 
                 type="button"
                 onClick={handleTestAllModels}
@@ -257,7 +266,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
           {/* Models Status List */}
           <div ref={listRef} className="flex-1 min-h-[150px] overflow-y-auto border border-gray-100 rounded-lg bg-gray-50 p-2 text-xs">
                 <p className="text-gray-400 mb-2 px-2 sticky top-0 bg-gray-50 pb-1 border-b border-gray-100">
-                    可用模型列表 ({availableModels.length}个):
+                    模型连通性状态:
                 </p>
                 {availableModels.map((m) => (
                     <div 
@@ -304,14 +313,14 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
                 onClick={handleBack}
                 className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-lg transition-colors"
                 >
-                返回
+                返回修改配置
                 </button>
                 <button
                 type="button"
                 onClick={handleStart}
                 className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition-all active:scale-95"
                 >
-                启动任务
+                启动生成任务
                 </button>
             </div>
           </div>
