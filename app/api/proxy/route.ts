@@ -1,9 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 
-// 使用 Edge Runtime，速度更快，且支持标准的 Web Fetch API
-export const runtime = 'edge';
+// 切换回默认的 Node.js Runtime，它比 Edge Runtime 支持更长的执行时间
+// export const runtime = 'edge'; // REMOVED
 
-// 处理预检请求 (CORS)
+// 尝试将超时时间设置为 Vercel Hobby 层的最大允许值 (通常是 10s 或 60s，取决于具体环境)
+// Pro 用户可以支持更长
+export const maxDuration = 60; 
+export const dynamic = 'force-dynamic';
+
 export async function OPTIONS() {
   return new NextResponse(null, {
     status: 200,
@@ -15,9 +19,9 @@ export async function OPTIONS() {
   });
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: Request) {
   try {
-    // 1. 解析前端传来的数据
+    // 1. 解析请求体
     const bodyText = await req.text();
     let payload;
     try {
@@ -29,39 +33,48 @@ export async function POST(req: NextRequest) {
     const { targetUrl, method, headers, body } = payload;
 
     if (!targetUrl) {
-      return NextResponse.json({ error: 'Missing target URL parameter' }, { status: 400 });
+      return NextResponse.json({ error: 'Missing targetUrl parameter' }, { status: 400 });
     }
 
-    console.log(`[Edge Proxy] ${method || 'GET'} -> ${targetUrl}`);
+    console.log(`[Node Proxy] Forwarding ${method || 'GET'} to: ${targetUrl}`);
 
-    // 2. 服务器端发起请求 (支持 HTTP 和 HTTPS)
-    // Edge Runtime 的 fetch API 更加健壮
+    // 2. 发起后端请求 (Node.js fetch)
     const upstreamResponse = await fetch(targetUrl, {
       method: method || 'GET',
       headers: headers || {},
       body: body ? JSON.stringify(body) : undefined,
     });
 
-    // 3. 获取结果 (先拿文本，防止 JSON 解析挂掉)
-    const data = await upstreamResponse.text();
+    // 3. 处理响应
+    const responseText = await upstreamResponse.text();
+    
+    // 尝试解析 JSON，如果失败则返回 null，后续直接返回文本
+    let responseJson;
+    try {
+        responseJson = JSON.parse(responseText);
+    } catch {
+        responseJson = null;
+    }
 
-    // 4. 返回给前端
-    return new NextResponse(data, {
-      status: upstreamResponse.status,
-      headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*', // 再次确保前端能收到
-      },
-    });
+    if (!upstreamResponse.ok) {
+        console.error(`[Upstream Error] ${upstreamResponse.status}:`, responseText.slice(0, 200));
+        return NextResponse.json(
+            responseJson || { error: responseText || upstreamResponse.statusText }, 
+            { status: upstreamResponse.status }
+        );
+    }
+
+    // 成功返回
+    return NextResponse.json(responseJson || { data: responseText });
 
   } catch (error: any) {
-    console.error("[Edge Proxy Error]", error);
+    console.error('[Node Proxy Internal Error]', error);
     return NextResponse.json(
-        { error: 'Proxy Request Failed: ' + error.message }, 
         { 
-            status: 500,
-            headers: { 'Access-Control-Allow-Origin': '*' }
-        }
+            error: 'Proxy Error: ' + error.message,
+            hint: '如果是 504 Gateway Timeout，说明模型生成时间超过了 Vercel Serverless Function 的限制 (通常免费版为 10-60秒)。' 
+        }, 
+        { status: 500 }
     );
   }
 }
