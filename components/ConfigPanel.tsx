@@ -86,12 +86,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
     if (result.available) {
       setTestResult(`连接成功! 延迟: ${result.latency}ms`);
     } else {
-      // Improve error readability
-      if (result.error?.includes("Token 无效")) {
-        setError("连接被拒绝：Base URL 可能未生效，导致请求直连了 Google 官方。请检查 Base URL 是否正确。");
-      } else {
-        setError(`连接失败: ${result.error}`);
-      }
+      setError(`连接失败: ${result.error}`);
     }
     setIsTesting(false);
   };
@@ -143,7 +138,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
     
     setIsTesting(false);
     if (successCount === 0) {
-        setError("所有模型均不可用。提示：如果看到 'Token 无效' 错误，请尝试删除 Base URL 中的 /v1beta 等后缀，只保留域名。");
+        setError("所有模型均不可用。请检查 API Key 权限或 Base URL 是否正确 (需包含 /v1)。");
     } else {
         setTestResult(`测试完成。共发现 ${successCount} 个可用模型。`);
     }
@@ -170,7 +165,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
       <div className="text-center mb-6 shrink-0">
         <h2 className="text-2xl font-bold text-gray-800">Daily Pulse Setup</h2>
         <p className="text-gray-500 text-sm mt-2">
-          {step === 'credentials' ? '配置 API 令牌' : '模型连通性测试'}
+          {step === 'credentials' ? '配置 API 令牌 (One API / OpenAI 格式)' : '模型连通性测试'}
         </p>
       </div>
 
@@ -191,19 +186,20 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              Base URL (服务商地址)
+              Base URL (API 接口地址)
             </label>
             <input
               type="text"
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="https://proxy.example.com"
+              placeholder="例如: https://oneapi.site/v1"
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
             />
-            <div className="text-xs text-gray-500 mt-1 bg-yellow-50 p-2 rounded border border-yellow-100">
-              <strong>重要提示：</strong> 如果使用第三方代理 Token，必须填写 Base URL。<br/>
-              程序已强制拦截官方请求，将其重定向至您填写的地址。<br/>
-              建议格式: <code>https://your-domain.com</code> (一般无需加 /v1beta)
+            <div className="text-xs text-gray-500 mt-1 bg-blue-50 p-2 rounded border border-blue-100">
+              <strong>使用说明：</strong> 本应用现在使用 <code>/v1/chat/completions</code> 标准接口。<br/>
+              请填写您的 New API 或 One API 域名，通常以 <code>/v1</code> 结尾。<br/>
+              示例: <code>https://api.openai-proxy.com/v1</code><br/>
+              (如果您忘记写 /v1，系统会自动尝试补全)
             </div>
           </div>
 
@@ -222,9 +218,6 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
             <div className="flex justify-between items-center mb-1">
                <label className="block text-sm font-medium text-gray-700">
                 当前选择模型
-                <a href="https://ai.google.dev/gemini-api/docs/models/gemini" target="_blank" rel="noopener noreferrer" className="ml-2 text-blue-500 text-xs hover:underline font-normal">
-                  (查看官方模型列表)
-                </a>
               </label>
             </div>
            

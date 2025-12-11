@@ -1,130 +1,109 @@
-import { GoogleGenAI } from "@google/genai";
 import { AppConfig, DigestData, ModelOption } from "../types";
 import { DEFAULT_MODELS } from "../constants";
 
-// Helper: Custom Fetch to force Base URL override
-// This resolves issues where the SDK might ignore baseUrl in certain configurations
-// or when using specific proxy structures.
-const createCustomFetch = (baseUrl: string) => {
-  return async (url: RequestInfo | URL, options?: RequestInit) => {
-    let urlString = url.toString();
-    
-    // We define the standard Google host to be replaced
-    const googleHost = "generativelanguage.googleapis.com";
-    
-    // Clean user base url: remove trailing slashes
-    const cleanBaseUrl = baseUrl.replace(/\/+$/, '');
-
-    // If the request is trying to hit Google, we redirect it to the proxy
-    if (urlString.includes(googleHost)) {
-      // Logic: 
-      // Original: https://generativelanguage.googleapis.com/v1beta/models/...
-      // Target:   https://proxy.example.com/v1beta/models/...
-      // We replace the entire protocol + host part.
-      urlString = urlString.replace("https://" + googleHost, cleanBaseUrl);
-      
-      console.log(`[Proxy Redirect] ${url} -> ${urlString}`);
-    }
-
-    return fetch(urlString, options);
-  };
+// Helper: Normalize Base URL to ensure it ends with /v1 convention if missing
+const normalizeBaseUrl = (url: string): string => {
+  let cleaned = url.trim().replace(/\/+$/, '');
+  
+  // Many "One API" users forget the /v1 suffix. 
+  // If it's not present, we append it to follow OpenAI standards.
+  if (!cleaned.endsWith('/v1')) {
+      console.log(`[Auto-Fix] Appending /v1 to Base URL: ${cleaned} -> ${cleaned}/v1`);
+      return `${cleaned}/v1`;
+  }
+  return cleaned;
 };
 
-// Helper to create a client with dynamic configuration
-const createClient = (config: { apiKey: string; baseUrl?: string }) => {
-  const options: any = {
-    apiKey: config.apiKey
+// Generic Fetcher for OpenAI-Compatible APIs
+const openAIFetch = async (
+  baseUrl: string,
+  apiKey: string,
+  endpoint: string,
+  body?: any,
+  method: string = 'POST'
+) => {
+  const normalizedBase = normalizeBaseUrl(baseUrl);
+  const url = `${normalizedBase}${endpoint}`;
+
+  console.log(`[API Request] ${method} ${url}`);
+
+  const headers: HeadersInit = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${apiKey}`
   };
-  
-  if (config.baseUrl && config.baseUrl.trim().length > 0) {
-    // 1. Pass baseUrl directly (if SDK supports it)
-    options.baseUrl = config.baseUrl.replace(/\/+$/, '');
-    
-    // 2. IMPORTANT: Pass a custom fetch to GUARANTEE the redirect happens.
-    // This fixes the "API Key Not Valid" error caused by SDK falling back to googleapis.com
-    options.fetch = createCustomFetch(options.baseUrl);
+
+  const config: RequestInit = {
+    method,
+    headers,
+  };
+
+  if (body) {
+    config.body = JSON.stringify(body);
   }
 
-  return new GoogleGenAI(options);
+  try {
+    const response = await fetch(url, config);
+    
+    if (!response.ok) {
+       const errorText = await response.text();
+       // Try to parse error JSON if possible
+       try {
+           const errorJson = JSON.parse(errorText);
+           throw new Error(errorJson.error?.message || `HTTP ${response.status}: ${errorText}`);
+       } catch (e) {
+           throw new Error(`HTTP ${response.status} at ${url}: ${errorText}`);
+       }
+    }
+
+    return await response.json();
+  } catch (error: any) {
+      console.error("Fetch Error:", error);
+      throw error;
+  }
 };
 
-// Test a single model's connectivity
+// Check if a model is available via Chat Completions
 export const checkModelAvailability = async (
   apiKey: string, 
   baseUrl: string, 
   modelId: string
 ): Promise<{ available: boolean; latency?: number; error?: string }> => {
-  const ai = createClient({ apiKey, baseUrl });
   const start = Date.now();
-  
   try {
-    // Try a very simple generation task
-    await ai.models.generateContent({
+    // Send a minimal request to test connectivity
+    await openAIFetch(baseUrl, apiKey, '/chat/completions', {
       model: modelId,
-      contents: { parts: [{ text: "Hi" }] },
+      messages: [{ role: "user", content: "Hi" }],
+      max_tokens: 5
     });
     return { available: true, latency: Date.now() - start };
   } catch (error: any) {
-    const msg = error.message || "";
-    
-    // SMART CHECK:
-    // If the error is about "Model requires image" or "Multi-turn chat not supported", 
-    // it implies the connection SUCCEEDED and the model EXISTS, but our test payload was wrong.
-    // We count this as AVAILABLE.
-    if (
-      msg.includes("image") || 
-      msg.includes("media") || 
-      msg.includes("modalities") ||
-      msg.includes("Invalid argument") // Sometimes prompt format issues
-    ) {
-       // However, if it's explicitly "API key not valid", it is NOT available.
-       if (msg.includes("API key not valid") || msg.includes("403") || msg.includes("401")) {
-         return { available: false, error: "Token 无效或 BaseURL 未生效 (请求被 Google 拒绝)" };
-       }
-       // If it's 404 Not Found, it's unavailable.
-       if (msg.includes("404") || msg.includes("Not Found")) {
-         return { available: false, error: "模型不存在 (404) 或 路径错误" };
-       }
-
-       // Otherwise, assume the model is there but picky about input
-       return { available: true, latency: Date.now() - start };
-    }
-
-    return { available: false, error: msg };
+    return { available: false, error: error.message };
   }
 };
 
+// Fetch list of models from /v1/models
 export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Promise<ModelOption[]> => {
-  const ai = createClient({ apiKey, baseUrl });
-  
   try {
-    console.log("Attempting to fetch models. BaseURL:", baseUrl || "Default");
+    console.log("Fetching models list from OpenAI-compatible endpoint...");
+    const data = await openAIFetch(baseUrl, apiKey, '/models', undefined, 'GET');
     
-    // Attempt to list models
-    const response: any = await ai.models.list();
-    
-    if (response && response.models) {
-      const models = response.models
-        .filter((m: any) => 
-          m.supportedGenerationMethods?.includes('generateContent')
-        )
-        .map((m: any) => {
-          const id = m.name.replace(/^models\//, '');
-          return {
-            id: id,
-            name: m.displayName ? `${m.displayName} (${id})` : id,
+    // OpenAI format: { object: "list", data: [ { id: "...", ... } ] }
+    if (data && Array.isArray(data.data)) {
+        const models = data.data.map((m: any) => ({
+            id: m.id,
+            name: m.id, // OpenAI list endpoint usually just gives IDs
             status: 'unknown'
-          };
-        });
-        
-      console.log(`Successfully fetched ${models.length} models.`);
-      return models.length > 0 ? models : DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption));
+        }));
+        console.log(`Fetched ${models.length} models.`);
+        return models.length > 0 ? models : DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption));
     }
     
-    throw new Error("Empty model list");
+    console.warn("Model list format unexpected:", data);
+    return DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption));
 
-  } catch (listError: any) {
-    console.warn("Model listing failed, using defaults.", listError.message);
+  } catch (e: any) {
+    console.warn("Failed to fetch models list, using defaults.", e.message);
     return DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption));
   }
 };
@@ -133,121 +112,110 @@ export const generateDailyDigest = async (
   config: AppConfig, 
   onLog: (msg: string) => void
 ): Promise<DigestData> => {
-  const ai = createClient({ apiKey: config.apiKey, baseUrl: config.baseUrl });
-
-  onLog(`正在初始化模型: ${config.model}...`);
+  onLog(`正在初始化 (API 模式: OpenAI 兼容, 模型: ${config.model})...`);
 
   const prompt = `
     You are an automated Daily Information Digest agent.
     
     ### Task 1: Social Media & Trends (The "Pulse")
     - **Goal**: Identify the TOP 10 trending topics/news today.
-    - **Search Strategy**: DO NOT try to access x.com (Twitter) or youtube.com directly. 
-    - **Instead, search for**: "top 10 trending topics on Twitter today summary", "viral YouTube videos today news report", and "tech news summaries today".
     - **Filter**: Ignore minor celebrity gossip. Focus on tech news, major cultural memes, or significant global discussions.
     - **Quantity**: Provide EXACTLY 10 distinct items.
 
     ### Task 2: Health & Science (The "Breakthroughs")
     - **Goal**: Find the TOP 10 high-impact medical or health news.
-    - **Search Strategy**: Search for "top 10 medical breakthroughs last 24h summary" or "significant health study results published today".
-    - **Source Check**: Prioritize reputable journals (Nature, Lancet) or major news outlets (BBC Health, CNN Health).
+    - **Source Check**: Prioritize reputable journals (Nature, Lancet) or major news outlets.
     - **Quantity**: Provide EXACTLY 10 distinct items.
 
     ### Output Requirements (CRITICAL)
     1. **Depth**: Each English summary must be substantial (approx 60-80 words). Explain context, impact, and why it matters.
     2. **Translation**: Provide a fluent, professional Chinese translation of that summary.
-    3. **Links**: The 'source_url' field MUST be a valid, absolute HTTP/HTTPS URL. Use actual URLs found by Google Search.
-    4. **Format**: Return the result STRICTLY as a JSON object.
+    3. **Format**: Return the result STRICTLY as a JSON object. No Markdown code blocks if possible, just raw JSON.
 
     The JSON structure must be:
     {
       "social": [
-        { "title": "...", "summary_en": "...", "summary_cn": "...", "source_url": "...", "source_name": "..." },
-        // ... total 10 items
+        { "title": "...", "summary_en": "...", "summary_cn": "...", "source_url": "http://...", "source_name": "..." },
       ],
       "health": [
-        // ... total 10 items
       ]
     }
   `;
 
-  const processResponseText = (text: string | undefined): DigestData => {
-    if (!text) throw new Error("未能从 Gemini 接收到数据 (Empty Response)。");
+  // Construct OpenAI-style payload
+  const payload: any = {
+    model: config.model,
+    messages: [
+      { 
+          role: "system", 
+          content: "You are a professional news analyst. Output valid JSON only." 
+      },
+      { 
+          role: "user", 
+          content: prompt 
+      }
+    ],
+    // Some providers support JSON mode to guarantee valid JSON
+    response_format: { type: "json_object" }
+  };
 
+  try {
+    let responseData;
+    
+    // First attempt with JSON mode
+    try {
+        onLog("发送请求中 (尝试启用 JSON 模式)...");
+        responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
+    } catch(err: any) {
+        // If the provider doesn't support response_format (400 Bad Request), retry without it
+        if (err.message.includes("response_format") || err.message.includes("400") || err.message.includes("not supported")) {
+            onLog("当前模型/平台不支持 strict JSON 模式，正在降级重试...");
+            delete payload.response_format;
+            responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
+        } else {
+            throw err;
+        }
+    }
+
+    const content = responseData.choices?.[0]?.message?.content;
+    
+    if (!content) {
+        throw new Error("API 返回成功但没有内容 (content is empty)");
+    }
+
+    onLog("接收到数据，正在解析...");
+
+    // JSON Parsing Logic
+    let text = content.trim();
+    // Remove Markdown code blocks if present
     if (text.includes("```json")) {
         text = text.replace(/```json/g, "").replace(/```/g, "");
     } else if (text.includes("```")) {
         text = text.replace(/```/g, "");
     }
-    text = text.trim();
-
+    
+    let data: DigestData;
     try {
-        return JSON.parse(text);
+        data = JSON.parse(text);
     } catch (parseError) {
-        console.warn("Direct JSON parse failed, attempting regex extraction", parseError);
+        onLog("JSON 解析初步失败，尝试正则提取...");
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-            try {
-                return JSON.parse(jsonMatch[0]);
-            } catch (e) {
-                throw new Error("无法解析返回的数据格式 (JSON Invalid)");
-            }
+            data = JSON.parse(jsonMatch[0]);
         } else {
-             throw new Error("无法解析返回的数据格式 (No JSON found)");
+             throw new Error("API 返回的数据不是有效的 JSON 格式");
         }
     }
-  };
 
-  try {
-    onLog("尝试连接 Google Search 工具进行增强搜索...");
-    
-    // Check if tools are supported by the model (simple heuristic or trial)
-    const response = await ai.models.generateContent({
-      model: config.model,
-      contents: prompt,
-      config: {
-        tools: [{ googleSearch: {} }],
-        systemInstruction: "You are a professional news analyst. You verify facts via Google Search before summarizing.",
-      },
-    });
-
-    onLog("正在处理搜索结果...");
-    const data = processResponseText(response.text);
+    // Ensure structure
     if (!data.social) data.social = [];
     if (!data.health) data.health = [];
-    
-    onLog(`内容生成完成 (社交: ${data.social.length}条, 健康: ${data.health.length}条)。`);
+
+    onLog(`解析成功 (社交: ${data.social.length}条, 健康: ${data.health.length}条)。`);
     return data;
 
   } catch (error: any) {
-    onLog(`增强模式失败 (${error.message || 'Unknown Error'})。`);
-    onLog("正在尝试降级模式 (不使用 Google Search 工具)...");
-    
-    const fallbackPrompt = prompt + `
-    
-    [IMPORTANT NOTE]
-    Since you cannot access real-time search tools right now, please generate this digest based on your **latest available knowledge cutoff** or simulated trending data. 
-    Make sure the content is realistic and high-quality, even if not strictly "live" from today.
-    `;
-
-    try {
-        const response = await ai.models.generateContent({
-          model: config.model,
-          contents: fallbackPrompt,
-          config: {
-            systemInstruction: "You are a professional news analyst.",
-          },
-        });
-
-        const data = processResponseText(response.text);
-        if (!data.social) data.social = [];
-        if (!data.health) data.health = [];
-
-        onLog(`降级模式生成成功 (注意：数据可能不是实时联网的)。`);
-        return data;
-    } catch (fallbackError: any) {
-        onLog(`降级模式也失败了: ${fallbackError.message}`);
-        throw fallbackError;
-    }
+    onLog(`请求失败: ${error.message}`);
+    throw error;
   }
 };
