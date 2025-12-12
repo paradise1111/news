@@ -185,33 +185,53 @@ export const generateDailyDigest = async (
 ): Promise<DigestData> => {
   onLog(`正在初始化 (API 模式: OpenAI 兼容 / 边缘心跳代理, 模型: ${config.model})...`);
 
-  // Prompt updated: Reduced item count from 10 to 5 to avoid token limits/timeouts
+  // --- Calculate Yesterday's Date for Better Search Results ---
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  
+  // Format: "October 26, 2023"
+  const targetDateStr = yesterday.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  // Format: "2023-10-26" (Good for search queries)
+  const queryDateStr = yesterday.toISOString().split('T')[0];
+
+  onLog(`设定目标日期: ${queryDateStr} (昨日热点)`);
+
+  // Prompt updated to enforce yesterday's news, diversity, and link validity
   const prompt = `
     You are an automated Daily Information Digest agent.
     
-    CRITICAL INSTRUCTION:
-    You MUST use the provided 'googleSearch' tool to find REAL, CURRENT information.
-    Do NOT hallucinate or make up news. If you cannot find a link using the tool, do not include the item.
+    ### CONTEXT
+    Today is ${today.toISOString().split('T')[0]}.
+    **TARGET DATE FOR NEWS: ${targetDateStr} (${queryDateStr}).**
+    
+    ### CRITICAL INSTRUCTION
+    1. **SEARCH**: You MUST use your search tool (if available) to find events specifically from **${targetDateStr}**.
+    2. **DIVERSITY**: Do NOT pick 5 stories from the same website. 
+       - Mix sources: Major news (CNN, BBC, Reuters), Tech blogs (The Verge, TechCrunch), and Social trends (Reddit, X/Twitter discussions).
+       - Max 2 items from the same domain.
+    3. **LINKS**: Ensure links are VALID and ACCESSIBLE. Do not invent URLs. If a specific article link is unstable, use the main category link of the publisher.
     
     ### Task 1: Social Media & Trends (The "Pulse")
-    - **Goal**: Identify the TOP 5 trending topics/news today using Google Search.
-    - **Filter**: Ignore minor celebrity gossip. Focus on tech news, major cultural memes, or significant global discussions.
-    - **Quantity**: Provide EXACTLY 5 distinct items.
+    - **Goal**: Identify the TOP 5 trending topics from **${targetDateStr}**.
+    - **Keywords to search**: "trending news ${queryDateStr}", "viral stories ${queryDateStr}", "top reddit posts ${queryDateStr}".
+    - **Content**: Focus on major cultural moments, tech drama, or viral discussions.
+    - **Quantity**: EXACTLY 5 distinct items.
 
     ### Task 2: Health & Science (The "Breakthroughs")
-    - **Goal**: Find the TOP 5 high-impact medical or health news from reputable sources using Google Search.
-    - **Quantity**: Provide EXACTLY 5 distinct items.
+    - **Goal**: Find the TOP 5 high-impact medical or science news from **${targetDateStr}**.
+    - **Keywords to search**: "science news ${queryDateStr}", "health breakthrough ${queryDateStr}".
+    - **Quantity**: EXACTLY 5 distinct items.
 
-    ### Output Requirements (CRITICAL)
-    1. **Depth**: Each English summary must be substantial (approx 60-80 words). Explain context, impact, and why it matters.
-    2. **Translation**: Provide a fluent, professional Chinese translation of that summary.
-    3. **Source**: You MUST provide the REAL URL (source_url) found via the search tool.
-    4. **Format**: Return the result STRICTLY as a JSON object. No Markdown code blocks if possible, just raw JSON.
-
-    The JSON structure must be:
+    ### Output Requirements
+    1. **Depth**: Summary must be substantial (60-80 words).
+    2. **Translation**: Provide a professional Chinese translation.
+    3. **Format**: Return STRICT JSON.
+    
+    JSON Structure:
     {
       "social": [
-        { "title": "...", "summary_en": "...", "summary_cn": "...", "source_url": "http://...", "source_name": "..." },
+        { "title": "...", "summary_en": "...", "summary_cn": "...", "source_url": "Must be a real URL", "source_name": "e.g. The Verge" },
       ],
       "health": [
       ]
@@ -223,37 +243,60 @@ export const generateDailyDigest = async (
     messages: [
       { 
           role: "system", 
-          content: "You are a professional news analyst. You have access to Google Search. You must output valid JSON." 
+          content: "You are a professional news analyst. Output valid JSON only." 
       },
       { 
           role: "user", 
           content: prompt 
       }
     ],
+    // Only inject tools if it looks like a Gemini model, 
+    // OR rely on the fallback logic below to remove it if the model rejects it.
+    // DeepSeek usually fails with this specific tool format, so the fallback is crucial.
     tools: [
         { googleSearch: {} }
     ],
     response_format: { type: "json_object" }
   };
 
+  // Special handling for DeepSeek models to avoid initial 400 errors if possible
+  const isDeepSeek = config.model.toLowerCase().includes('deepseek');
+  if (isDeepSeek) {
+     // DeepSeek typically doesn't support the 'googleSearch' tool definition in this format.
+     // We remove it to prevent "Invalid parameter" errors, forcing it to rely on its training data 
+     // or external browsing if the proxy implicitly handles it.
+     console.log("DeepSeek model detected: Removing explicit Google Search tool definition.");
+     delete payload.tools;
+  }
+
   try {
     let responseData;
     
     try {
-        onLog("发送请求中 (已启用 Google Search 联网)...");
-        responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
-    } catch(err: any) {
-        // Enhance error message visibility
-        const errorMsg = err.message || '';
+        if (!isDeepSeek) {
+            onLog("发送请求中 (尝试启用搜索工具)...");
+        } else {
+            onLog("发送请求中 (DeepSeek 模式)...");
+        }
         
-        if (errorMsg.includes("tool") || errorMsg.includes("googleSearch") || errorMsg.includes("400")) {
-             onLog(`警告: 当前模型/渠道不支持 Google Search (${errorMsg})，正在尝试降级...`);
+        responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
+
+    } catch(err: any) {
+        // Enhance error message visibility and fallback
+        const errorMsg = err.message || '';
+        console.warn("First attempt failed:", errorMsg);
+
+        if (errorMsg.includes("tool") || errorMsg.includes("googleSearch") || errorMsg.includes("400") || errorMsg.includes("Invalid")) {
+             onLog(`API 提示不支持搜索工具 (${errorMsg})，正在移除工具并重试...`);
              delete payload.tools;
+             // Some models also hate "response_format: json_object" if not strictly OpenAI compatible
+             // We keep it for now, but if it fails again, the user will see the error.
              responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
         }
         else if (errorMsg.includes("response_format")) {
-            onLog("API 不支持 strict JSON 模式，正在降级重试...");
+            onLog("API 不支持 JSON 模式，正在降级为普通文本模式...");
             delete payload.response_format;
+            if (payload.tools) delete payload.tools; // Usually better to strip tools too if basic features fail
             responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
         } else {
             throw err;
@@ -263,7 +306,7 @@ export const generateDailyDigest = async (
     const content = responseData.choices?.[0]?.message?.content;
     
     if (!content) {
-        throw new Error("API 返回成功但没有内容 (content is empty)");
+        throw new Error("API 返回内容为空。如果使用的是 DeepSeek，可能是模型拒绝了回答或无法联网。");
     }
 
     onLog("接收到数据，正在解析...");
@@ -281,7 +324,7 @@ export const generateDailyDigest = async (
         data = JSON.parse(text);
     } catch (parseError) {
         onLog("JSON 解析初步失败，尝试正则提取...");
-        // 尝试提取第一个 { 和最后一个 } 之间的内容
+        // 尝试提取第一个 { 和最后一个 } 之间的内容 (Greedy match)
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
             try {
@@ -295,18 +338,23 @@ export const generateDailyDigest = async (
         } else {
              const snippet = text.length > 100 ? text.substring(0, 100) + "..." : text;
              console.error("No JSON block found. Raw Content:", text);
-             throw new Error(`API 返回了非 JSON 格式数据。这可能是因为模型拒绝了请求或返回了纯文本。预览: ${snippet}`);
+             throw new Error(`API 返回了非 JSON 格式数据。预览: ${snippet}`);
         }
     }
 
     if (!data.social) data.social = [];
     if (!data.health) data.health = [];
 
+    // Validation Check
+    if (data.social.length === 0 && data.health.length === 0) {
+        onLog("⚠️ 警告: 返回的数据列表为空。模型可能未能找到相关新闻。");
+    }
+
     onLog(`解析成功 (社交: ${data.social.length}条, 健康: ${data.health.length}条)。`);
     return data;
 
   } catch (error: any) {
-    onLog(`请求失败: ${error.message}`);
+    onLog(`任务失败: ${error.message}`);
     throw error;
   }
 };
