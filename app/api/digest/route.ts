@@ -85,8 +85,14 @@ const generateEmailText = (data: any) => {
 
 export async function POST(request: Request) {
   try {
-    // 优先读取环境变量
-    const resendApiKey = process.env.RESEND_API_KEY || 're_hC872nsy_5TcCgN2rjpKiRe6KfKMdA3NK';
+    // 优先读取环境变量，不再使用硬编码的回退 Key
+    const resendApiKey = process.env.RESEND_API_KEY;
+    
+    if (!resendApiKey) {
+        console.error("Missing RESEND_API_KEY environment variable");
+        return NextResponse.json({ error: 'Server configuration error: Missing Mailer API Key' }, { status: 500 });
+    }
+
     const resend = new Resend(resendApiKey);
 
     const body = await request.json();
@@ -132,8 +138,8 @@ export async function POST(request: Request) {
 
         // --- 限流保护 ---
         // Resend 免费版限制约 2 req/sec。
-        // 我们强制等待 600ms 以确保安全。
-        await new Promise(resolve => setTimeout(resolve, 600));
+        // 为了绝对安全，将间隔增加至 1000ms (1秒)。
+        await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
     // 统计结果

@@ -187,8 +187,8 @@ export async function GET(request: Request) {
             results.push({ email, error: err.message });
         }
         
-        // 速率限制保护: 600ms 延迟
-        await new Promise(r => setTimeout(r, 600));
+        // 速率限制保护: 1000ms 延迟
+        await new Promise(r => setTimeout(r, 1000));
     }
 
     const failures = results.filter((r: any) => r.error);
