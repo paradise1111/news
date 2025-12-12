@@ -29,22 +29,28 @@ const generateEmailHtml = (data: any) => {
 
   return `
     <!DOCTYPE html>
-    <html>
-    <body style="margin: 0; padding: 0; background-color: #f4f4f5;">
+    <html lang="zh-CN">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>Daily Pulse</title>
+    </head>
+    <body style="margin: 0; padding: 0; background-color: #f4f4f5; -webkit-font-smoothing: antialiased;">
       <div style="${EMAIL_STYLES.container}">
         <div style="${EMAIL_STYLES.header}">
-          <h1 style="margin:0; font-size: 24px;">Daily Pulse 日报</h1>
-          <p style="margin: 5px 0 0 0; opacity: 0.9;">${new Date().toLocaleDateString()}</p>
+          <h1 style="margin:0; font-size: 24px; line-height: 1.2;">Daily Pulse 日报</h1>
+          <p style="margin: 8px 0 0 0; opacity: 0.9; font-size: 14px;">${new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
         </div>
         
-        <div style="${EMAIL_STYLES.sectionTitle}">社交热点</div>
-        ${data.social ? renderItems(data.social) : '<p>无相关内容</p>'}
+        <div style="${EMAIL_STYLES.sectionTitle}">🔥 社交热点</div>
+        ${data.social && data.social.length > 0 ? renderItems(data.social) : '<p style="color:#666; padding:10px;">暂无相关内容</p>'}
         
-        <div style="${EMAIL_STYLES.sectionTitle}">健康前沿</div>
-        ${data.health ? renderItems(data.health) : '<p>无相关内容</p>'}
+        <div style="${EMAIL_STYLES.sectionTitle}">🧬 健康前沿</div>
+        ${data.health && data.health.length > 0 ? renderItems(data.health) : '<p style="color:#666; padding:10px;">暂无相关内容</p>'}
         
         <div style="${EMAIL_STYLES.footer}">
-          由 Gemini 2.5 生成 • 自动资讯摘要
+          <p>由 Gemini 2.5 AI 生成 • 自动资讯摘要</p>
+          <p style="margin-top:5px;">如需退订，请直接回复邮件。</p>
         </div>
       </div>
     </body>
@@ -52,13 +58,35 @@ const generateEmailHtml = (data: any) => {
   `;
 };
 
+// 新增辅助函数：生成纯文本字符串 (对抗垃圾邮件过滤器关键)
+const generateEmailText = (data: any) => {
+  let text = `Daily Pulse 日报 - ${new Date().toLocaleDateString('zh-CN')}\n\n`;
+
+  const processSection = (title: string, items: any[]) => {
+    text += `=== ${title} ===\n\n`;
+    if (!items || items.length === 0) {
+      text += "暂无内容\n\n";
+      return;
+    }
+    items.forEach((item, index) => {
+      text += `${index + 1}. ${item.title}\n`;
+      text += `摘要: ${item.summary_cn}\n`;
+      text += `来源: ${item.source_name}\n`;
+      text += `链接: ${item.source_url}\n\n`;
+    });
+  };
+
+  processSection("社交热点", data.social);
+  processSection("健康前沿", data.health);
+  
+  text += "\n----------------\n由 Gemini 2.5 AI 生成\n";
+  return text;
+};
+
 export async function POST(request: Request) {
   try {
-    // 优先读取环境变量，如果不存在则使用您提供的默认Key
-    // 建议在 Vercel 生产环境中配置 RESEND_API_KEY
+    // 优先读取环境变量
     const resendApiKey = process.env.RESEND_API_KEY || 're_hC872nsy_5TcCgN2rjpKiRe6KfKMdA3NK';
-    
-    // 初始化 Resend 客户端
     const resend = new Resend(resendApiKey);
 
     const body = await request.json();
@@ -68,25 +96,56 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing recipients list or data' }, { status: 400 });
     }
 
+    // 1. 准备内容 (HTML 和 纯文本)
     const htmlContent = generateEmailHtml(digestData);
+    const textContent = generateEmailText(digestData);
+    const subjectLine = `Daily Pulse 日报 - ${new Date().toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}`;
 
-    // 发送邮件 - 批量发送
-    const { data, error } = await resend.emails.send({
-      from: 'Daily Pulse <digest@misaki1.de5.net>', // 使用您的自定义域名
-      to: recipients, // 传入收件人数组
-      subject: `Daily Pulse - ${new Date().toLocaleDateString()}`,
-      html: htmlContent,
+    // 2. 遍历发送 (解决 "只显示收件人一个人" 问题)
+    // 使用 Promise.all 并行处理，提高效率，但要注意 Resend 的速率限制 (通常每秒几封没问题)
+    const sendPromises = recipients.map(async (recipientEmail) => {
+        try {
+            const { data, error } = await resend.emails.send({
+                from: 'Daily Pulse <digest@misaki1.de5.net>', 
+                to: [recipientEmail], // 这里只传单个收件人
+                subject: subjectLine,
+                html: htmlContent,
+                text: textContent, // 必填：纯文本版本，极大降低进入垃圾箱的概率
+                headers: {
+                    'X-Entity-Ref-ID': crypto.randomUUID(), // 增加唯一头，避免被识别为重复垃圾邮件
+                }
+            });
+            
+            if (error) {
+                console.error(`Failed to send to ${recipientEmail}:`, error);
+                return { email: recipientEmail, status: 'failed', error };
+            }
+            return { email: recipientEmail, status: 'success', id: data?.id };
+        } catch (e: any) {
+            console.error(`Exception sending to ${recipientEmail}:`, e);
+            return { email: recipientEmail, status: 'error', message: e.message };
+        }
     });
 
-    if (error) {
-      console.error('Resend API returned error:', error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+    const results = await Promise.all(sendPromises);
+    
+    // 统计结果
+    const successCount = results.filter(r => r.status === 'success').length;
+    const failCount = results.length - successCount;
+
+    if (successCount === 0 && failCount > 0) {
+         // 如果全部失败，返回 500
+         return NextResponse.json({ error: 'All emails failed to send', details: results }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, id: data?.id });
+    return NextResponse.json({ 
+        success: true, 
+        message: `Sent ${successCount} emails, ${failCount} failed.`,
+        details: results 
+    });
 
   } catch (error: any) {
-    console.error('Email sending failed:', error);
+    console.error('Email dispatch error:', error);
     return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
   }
 }
