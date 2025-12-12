@@ -262,9 +262,6 @@ export const generateDailyDigest = async (
   // Special handling for DeepSeek models to avoid initial 400 errors if possible
   const isDeepSeek = config.model.toLowerCase().includes('deepseek');
   if (isDeepSeek) {
-     // DeepSeek typically doesn't support the 'googleSearch' tool definition in this format.
-     // We remove it to prevent "Invalid parameter" errors, forcing it to rely on its training data 
-     // or external browsing if the proxy implicitly handles it.
      console.log("DeepSeek model detected: Removing explicit Google Search tool definition.");
      delete payload.tools;
   }
@@ -283,20 +280,24 @@ export const generateDailyDigest = async (
 
     } catch(err: any) {
         // Enhance error message visibility and fallback
-        const errorMsg = err.message || '';
+        const errorMsg = (err.message || '').toLowerCase();
         console.warn("First attempt failed:", errorMsg);
 
-        if (errorMsg.includes("tool") || errorMsg.includes("googleSearch") || errorMsg.includes("400") || errorMsg.includes("Invalid")) {
-             onLog(`API 提示不支持搜索工具 (${errorMsg})，正在移除工具并重试...`);
+        // Check for specific errors that warrant a retry WITHOUT tools
+        const isToolError = errorMsg.includes("tool") || errorMsg.includes("googlesearch") || errorMsg.includes("400") || errorMsg.includes("invalid");
+        const isNetworkError = errorMsg.includes("networkerror") || errorMsg.includes("fetch") || errorMsg.includes("stream error");
+        const isResponseFormatError = errorMsg.includes("response_format");
+
+        if (isToolError || isNetworkError) {
+             onLog(`首次请求失败 (${errorMsg})，正在尝试移除工具并降级重试...`);
              delete payload.tools;
-             // Some models also hate "response_format: json_object" if not strictly OpenAI compatible
-             // We keep it for now, but if it fails again, the user will see the error.
+             // Also remove response format if it might be the cause, but usually tools are the main culprit for timeouts/network errors
              responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
         }
-        else if (errorMsg.includes("response_format")) {
+        else if (isResponseFormatError) {
             onLog("API 不支持 JSON 模式，正在降级为普通文本模式...");
             delete payload.response_format;
-            if (payload.tools) delete payload.tools; // Usually better to strip tools too if basic features fail
+            if (payload.tools) delete payload.tools;
             responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
         } else {
             throw err;
@@ -306,7 +307,7 @@ export const generateDailyDigest = async (
     const content = responseData.choices?.[0]?.message?.content;
     
     if (!content) {
-        throw new Error("API 返回内容为空。如果使用的是 DeepSeek，可能是模型拒绝了回答或无法联网。");
+        throw new Error("API 返回内容为空。请检查模型权限或重试。");
     }
 
     onLog("接收到数据，正在解析...");
@@ -324,20 +325,16 @@ export const generateDailyDigest = async (
         data = JSON.parse(text);
     } catch (parseError) {
         onLog("JSON 解析初步失败，尝试正则提取...");
-        // 尝试提取第一个 { 和最后一个 } 之间的内容 (Greedy match)
         const jsonMatch = text.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
             try {
                 data = JSON.parse(jsonMatch[0]);
             } catch (e) {
                  const snippet = text.length > 100 ? text.substring(0, 100) + "..." : text;
-                 console.error("Regex match failed parsing:", e);
-                 console.error("Raw Content:", text);
                  throw new Error(`无法从返回内容中提取有效 JSON。原始内容预览: ${snippet}`);
             }
         } else {
              const snippet = text.length > 100 ? text.substring(0, 100) + "..." : text;
-             console.error("No JSON block found. Raw Content:", text);
              throw new Error(`API 返回了非 JSON 格式数据。预览: ${snippet}`);
         }
     }
