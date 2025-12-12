@@ -101,40 +101,46 @@ export async function POST(request: Request) {
     const textContent = generateEmailText(digestData);
     const subjectLine = `Daily Pulse 日报 - ${new Date().toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}`;
 
-    // 2. 遍历发送 (解决 "只显示收件人一个人" 问题)
-    // 使用 Promise.all 并行处理，提高效率，但要注意 Resend 的速率限制 (通常每秒几封没问题)
-    const sendPromises = recipients.map(async (recipientEmail) => {
+    // 2. 串行发送 (解决 429 限流问题 和 隐私问题)
+    const results = [];
+    
+    console.log(`Starting to send emails to ${recipients.length} recipients...`);
+
+    for (const recipientEmail of recipients) {
         try {
             const { data, error } = await resend.emails.send({
                 from: 'Daily Pulse <digest@misaki1.de5.net>', 
-                to: [recipientEmail], // 这里只传单个收件人
+                to: [recipientEmail], // 单个发送
                 subject: subjectLine,
                 html: htmlContent,
-                text: textContent, // 必填：纯文本版本，极大降低进入垃圾箱的概率
+                text: textContent,
                 headers: {
-                    'X-Entity-Ref-ID': crypto.randomUUID(), // 增加唯一头，避免被识别为重复垃圾邮件
+                    'X-Entity-Ref-ID': crypto.randomUUID(),
                 }
             });
             
             if (error) {
                 console.error(`Failed to send to ${recipientEmail}:`, error);
-                return { email: recipientEmail, status: 'failed', error };
+                results.push({ email: recipientEmail, status: 'failed', error });
+            } else {
+                results.push({ email: recipientEmail, status: 'success', id: data?.id });
             }
-            return { email: recipientEmail, status: 'success', id: data?.id };
         } catch (e: any) {
             console.error(`Exception sending to ${recipientEmail}:`, e);
-            return { email: recipientEmail, status: 'error', message: e.message };
+            results.push({ email: recipientEmail, status: 'error', message: e.message });
         }
-    });
 
-    const results = await Promise.all(sendPromises);
+        // --- 限流保护 ---
+        // Resend 免费版限制约 2 req/sec。
+        // 我们强制等待 600ms 以确保安全。
+        await new Promise(resolve => setTimeout(resolve, 600));
+    }
     
     // 统计结果
     const successCount = results.filter(r => r.status === 'success').length;
     const failCount = results.length - successCount;
 
     if (successCount === 0 && failCount > 0) {
-         // 如果全部失败，返回 500
          return NextResponse.json({ error: 'All emails failed to send', details: results }, { status: 500 });
     }
 

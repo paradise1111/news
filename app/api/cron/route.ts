@@ -67,11 +67,9 @@ const generateEmailText = (data: any) => {
 // --- 主处理逻辑 ---
 
 export async function GET(request: Request) {
-  // 1. 安全检查 (验证 Cron Secret，防止恶意调用)
-  // 当部署到 Vercel 时，Vercel 会自动注入 CRON_SECRET 环境变量
+  // 1. 安全检查
   const authHeader = request.headers.get('authorization');
   if (process.env.CRON_SECRET && authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    // 为了方便测试，如果未设置 CRON_SECRET 环境变量，允许直接访问，但生产环境建议设置
     // return new NextResponse('Unauthorized', { status: 401 });
   }
 
@@ -80,7 +78,7 @@ export async function GET(request: Request) {
   try {
     // 2. 读取环境变量配置
     const apiKey = process.env.GEMINI_API_KEY;
-    const baseUrl = process.env.GEMINI_BASE_URL || 'https://api.openai-proxy.com/v1'; // 默认值
+    const baseUrl = process.env.GEMINI_BASE_URL || 'https://api.openai-proxy.com/v1'; 
     const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
     const recipientsStr = process.env.RECIPIENTS;
     const resendApiKey = process.env.RESEND_API_KEY;
@@ -91,7 +89,7 @@ export async function GET(request: Request) {
 
     const recipients = recipientsStr.split(',').map(r => r.trim()).filter(Boolean);
 
-    // 3. 准备提示词 (逻辑同 geminiService.ts)
+    // 3. 准备提示词
     const today = new Date();
     const yesterday = new Date(today);
     yesterday.setDate(today.getDate() - 1);
@@ -114,8 +112,7 @@ export async function GET(request: Request) {
       - Fields: title, summary_en, summary_cn (Chinese translation), source_url, source_name.
     `;
 
-    // 4. 调用 Gemini API (直接调用，不走 Proxy，因为 Cron 是服务端环境)
-    // 修正 URL：确保以 /v1 结尾
+    // 4. 调用 Gemini API
     const cleanBaseUrl = baseUrl.replace(/\/+$/, '').endsWith('/v1') ? baseUrl : `${baseUrl}/v1`;
     const targetUrl = `${cleanBaseUrl}/chat/completions`;
 
@@ -127,7 +124,6 @@ export async function GET(request: Request) {
         response_format: { type: "json_object" }
     };
 
-    // DeepSeek 兼容性处理
     if (!model.toLowerCase().includes('deepseek')) {
         payload.tools = [{ googleSearch: {} }];
     }
@@ -156,7 +152,6 @@ export async function GET(request: Request) {
     try {
         digestData = JSON.parse(text);
     } catch (e) {
-        // 简单重试提取
         const match = text.match(/\{[\s\S]*\}/);
         if (match) digestData = JSON.parse(match[0]);
         else throw new Error("Failed to parse AI JSON");
@@ -167,28 +162,35 @@ export async function GET(request: Request) {
 
     console.log(`[Cron] Content generated. Social: ${digestData.social.length}, Health: ${digestData.health.length}`);
 
-    // 6. 发送邮件
+    // 6. 发送邮件 (串行模式 + 延迟)
     const resend = new Resend(resendApiKey);
     const htmlContent = generateEmailHtml(digestData);
     const textContent = generateEmailText(digestData);
     const subjectLine = `Daily Pulse 日报 - ${new Date().toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}`;
 
-    console.log(`[Cron] Sending emails to ${recipients.length} recipients...`);
+    console.log(`[Cron] Sending emails to ${recipients.length} recipients (Sequential mode)...`);
 
-    const sendPromises = recipients.map(async (email: string) => {
-        return resend.emails.send({
-            from: 'Daily Pulse <digest@misaki1.de5.net>',
-            to: [email],
-            subject: subjectLine,
-            html: htmlContent,
-            text: textContent,
-            headers: { 'X-Entity-Ref-ID': crypto.randomUUID() }
-        });
-    });
+    const results = [];
+    for (const email of recipients) {
+        try {
+            const result = await resend.emails.send({
+                from: 'Daily Pulse <digest@misaki1.de5.net>',
+                to: [email],
+                subject: subjectLine,
+                html: htmlContent,
+                text: textContent,
+                headers: { 'X-Entity-Ref-ID': crypto.randomUUID() }
+            });
+            results.push({ email, ...result });
+        } catch (err: any) {
+            console.error(`[Cron] Failed to send to ${email}:`, err);
+            results.push({ email, error: err.message });
+        }
+        
+        // 速率限制保护: 600ms 延迟
+        await new Promise(r => setTimeout(r, 600));
+    }
 
-    const results = await Promise.all(sendPromises);
-    
-    // 检查是否有失败
     const failures = results.filter((r: any) => r.error);
     if (failures.length > 0) {
         console.error("[Cron] Some emails failed:", failures);
@@ -197,7 +199,8 @@ export async function GET(request: Request) {
     return NextResponse.json({ 
         success: true, 
         message: `Cron job executed. Sent to ${recipients.length} recipients.`,
-        dataSummary: { social: digestData.social.length, health: digestData.health.length }
+        dataSummary: { social: digestData.social.length, health: digestData.health.length },
+        failures: failures.length
     });
 
   } catch (error: any) {
