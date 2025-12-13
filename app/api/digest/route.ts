@@ -1,6 +1,13 @@
 import { NextResponse } from 'next/server';
 import { Resend } from 'resend';
 
+// Vercel Serverless Function 配置
+export const maxDuration = 60; 
+export const dynamic = 'force-dynamic';
+
+// 简单的 ID 生成器
+const generateId = () => Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+
 // 复用常量样式
 const EMAIL_STYLES = {
   container: "font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f5;",
@@ -58,7 +65,7 @@ const generateEmailHtml = (data: any) => {
   `;
 };
 
-// 新增辅助函数：生成纯文本字符串 (对抗垃圾邮件过滤器关键)
+// 新增辅助函数：生成纯文本字符串
 const generateEmailText = (data: any) => {
   let text = `Daily Pulse 日报 - ${new Date().toLocaleDateString('zh-CN')}\n\n`;
 
@@ -85,7 +92,6 @@ const generateEmailText = (data: any) => {
 
 export async function POST(request: Request) {
   try {
-    // 优先读取环境变量，不再使用硬编码的回退 Key
     const resendApiKey = process.env.RESEND_API_KEY;
     
     if (!resendApiKey) {
@@ -102,12 +108,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Missing recipients list or data' }, { status: 400 });
     }
 
-    // 1. 准备内容 (HTML 和 纯文本)
     const htmlContent = generateEmailHtml(digestData);
     const textContent = generateEmailText(digestData);
     const subjectLine = `Daily Pulse 日报 - ${new Date().toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}`;
 
-    // 2. 串行发送 (解决 429 限流问题 和 隐私问题)
     const results = [];
     
     console.log(`Starting to send emails to ${recipients.length} recipients...`);
@@ -116,12 +120,12 @@ export async function POST(request: Request) {
         try {
             const { data, error } = await resend.emails.send({
                 from: 'Daily Pulse <digest@misaki1.de5.net>', 
-                to: [recipientEmail], // 单个发送
+                to: [recipientEmail], 
                 subject: subjectLine,
                 html: htmlContent,
                 text: textContent,
                 headers: {
-                    'X-Entity-Ref-ID': crypto.randomUUID(),
+                    'X-Entity-Ref-ID': generateId(), // 使用自定义生成器
                 }
             });
             
@@ -136,13 +140,9 @@ export async function POST(request: Request) {
             results.push({ email: recipientEmail, status: 'error', message: e.message });
         }
 
-        // --- 限流保护 ---
-        // Resend 免费版限制约 2 req/sec。
-        // 为了绝对安全，将间隔增加至 1000ms (1秒)。
         await new Promise(resolve => setTimeout(resolve, 1000));
     }
     
-    // 统计结果
     const successCount = results.filter(r => r.status === 'success').length;
     const failCount = results.length - successCount;
 
