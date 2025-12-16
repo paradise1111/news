@@ -201,63 +201,63 @@ export const generateDailyDigest = async (
   const yesterday = new Date(today);
   yesterday.setDate(today.getDate() - 1);
   
-  const targetDateStr = yesterday.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  const queryDateStr = yesterday.toISOString().split('T')[0];
+  // Format: YYYY-MM-DD
+  const todayStr = today.toISOString().split('T')[0];
+  const targetDateStr = yesterday.toISOString().split('T')[0];
+  const targetDateHuman = yesterday.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
-  onLog(`设定目标日期: ${queryDateStr}`);
+  onLog(`当前日期: ${todayStr}`);
+  onLog(`目标新闻日期: ${targetDateStr} (${targetDateHuman})`);
 
-  // UPGRADED PROMPT: Xiaohongshu Strategy + Strict Link Checking + Score Differentiation
+  // UPGRADED PROMPT: Strict Date, Chinese Reason, 3 XHS Titles, Detailed Content
   const prompt = `
     You are an automated Daily Information Digest agent.
     
-    ### CONTEXT
-    Today is ${today.toISOString().split('T')[0]}.
-    **TARGET DATE FOR NEWS: ${targetDateStr} (${queryDateStr}).**
+    ### TIME CONTEXT (CRITICAL)
+    - **Current Date**: ${todayStr}
+    - **TARGET NEWS DATE**: ${targetDateStr}
+    - **STRICT RULE**: IGNORE ANY source dated before ${targetDateStr}. If a search result is from 2021, 2022, 2023, or early 2024, **REJECT IT**. Only select news from the last 48 hours.
     
-    ### CRITICAL INSTRUCTIONS
-    1. **LINKS (PRIORITY #1)**: 
-       - You MUST provide a **valid, real, and clickable** 'source_url' for every item. 
-       - **VERIFY** via the search tool. Do not guess links. If the link is 404, the item is useless.
+    ### INSTRUCTIONS
+    1. **LINKS**: Must be VALID and CLICKABLE. Verify using Google Search tool. No 404s.
+    2. **LANGUAGE**: 
+       - 'ai_score_reason': Must be in **CHINESE**.
+       - 'summary_cn': Fluent, native-level Chinese. **Length: 80-120 words** (Not just a headline, give details).
+       - 'summary_en': Concise English.
     
-    2. **SCORING (CURVED)**:
-       - **DO NOT** rate everything 90+. 
-       - Use the full range: 60 (Boring) to 99 (Viral/Explosive).
-       - Average items should be ~75.
-       - 'ai_score_reason' must be 3-5 words explaining WHY (e.g., "Niche audience only" or "Global headline").
+    3. **SCORING**: 
+       - Differentiate scores (60-99).
+       - Reason in Chinese (e.g., "涉及重大民生政策", "小众趣味话题").
     
-    3. **CONTENT CREATION (Xiaohongshu/Red Note)**:
-       - For every item (especially Health), provide 'xiaohongshu_advice'.
-       - This is a tip for a content creator.
-       - Format: "Title Idea: [Clickbait Title] | Angle: [Unique Perspective]"
+    4. **XIAOHONGSHU (RED NOTE) STRATEGY**:
+       - For Health/Lifestyle items, you act as a viral content creator.
+       - Provide 'xhs_titles': An array of **3 different** clickbait/viral titles.
+       - Style: Emotional, exaggerated, using keywords like "救命", "一定要看", "真相".
     
-    ### Task 1: Current Events (The "World")
-    - Scope: Economy, Politics, Culture.
-    - Quantity: 10 items.
+    ### TASKS
+    **Task 1: Social/Trends** (10 items) - Economy, Tech, Society.
+    **Task 2: Health/Life** (10 items) - Wellness, Diet, Biology. Focus on things people want to share on Red Note.
 
-    ### Task 2: Health & Hygiene (The "Body")
-    - Scope: Public health, medical studies, wellness, diet.
-    - Quantity: 10 items.
-    - **Focus**: Find items suitable for "Life Hacks" or "Wellness Tips" content.
-
-    ### Output Requirements
-    - Strict JSON.
-    
-    JSON Structure:
+    ### OUTPUT FORMAT (JSON ONLY)
     {
       "social": [
         { 
           "title": "...", 
           "summary_en": "...", 
-          "summary_cn": "...", 
+          "summary_cn": "Detailed summary here...", 
           "source_url": "...", 
           "source_name": "...", 
-          "ai_score": 82, 
-          "ai_score_reason": "High local interest", 
-          "xiaohongshu_advice": "Title: Why everyone is talking about X... | Angle: Focus on the money aspect",
+          "ai_score": 88, 
+          "ai_score_reason": "中文打分理由...", 
           "tags": ["Tag1"] 
         }
       ],
-      "health": [...]
+      "health": [
+        {
+          ...,
+          "xhs_titles": ["🔥Title 1", "Title 2", "Title 3"]
+        }
+      ]
     }
   `;
 
@@ -266,7 +266,7 @@ export const generateDailyDigest = async (
     messages: [
       { 
           role: "system", 
-          content: "You are a professional news analyst. Output valid JSON only. Never fabricate URLs. Act as a Content Strategist." 
+          content: "You are a professional editor. You ONLY accept news from the last 24-48 hours. You REJECT old news. You output strictly valid JSON." 
       },
       { 
           role: "user", 
@@ -290,7 +290,7 @@ export const generateDailyDigest = async (
     let responseData;
     
     try {
-        onLog("发送请求中 (搜索链接 + 生成小红书文案建议)...");
+        onLog("发送请求中 (严格过滤日期 + 生成三款爆款标题)...");
         responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
 
     } catch(err: any) {

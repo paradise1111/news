@@ -10,23 +10,6 @@ interface PipelineViewProps {
   onReset: () => void;
 }
 
-const PREVIEW_STYLES = {
-  container: "width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; color: #333; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; border: 1px solid #e5e7eb; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);",
-  header: "background-color: #111827; color: #ffffff; padding: 30px 20px; text-align: center;",
-  headerTitle: "font-size: 24px; font-weight: 800; margin: 0; letter-spacing: -0.5px;",
-  headerMeta: "font-family: monospace; color: #9ca3af; font-size: 12px; margin-top: 8px; text-transform: uppercase;",
-  sectionTitle: "background-color: #f9fafb; color: #111827; padding: 12px 20px; font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #e5e7eb; border-top: 1px solid #e5e7eb;",
-  card: "padding: 20px; border-bottom: 1px solid #f3f4f6;",
-  cardHeader: "margin-bottom: 12px;",
-  badge: "display: inline-block; background-color: #eff6ff; border: 1px solid #dbeafe; border-radius: 999px; padding: 2px 8px; font-size: 11px; color: #1e40af; font-weight: 600; margin-bottom: 8px;",
-  title: "font-size: 18px; font-weight: 700; line-height: 1.4; color: #111827; margin: 0 0 4px 0;",
-  summaryCn: "font-size: 15px; line-height: 1.6; color: #374151; margin-bottom: 6px;",
-  summaryEn: "font-size: 13px; line-height: 1.5; color: #6b7280; font-style: italic; margin-bottom: 12px;",
-  xhsBox: "background-color: #fff1f2; border-left: 3px solid #f43f5e; padding: 8px 12px; font-size: 12px; color: #881337; margin-bottom: 12px; border-radius: 0 4px 4px 0;",
-  linkBtn: "display: inline-block; background-color: #111827; color: #fff; text-decoration: none; padding: 8px 16px; font-size: 12px; font-weight: 600; border-radius: 6px; transition: opacity 0.2s;",
-  footer: "background-color: #f9fafb; padding: 30px 20px; text-align: center; font-size: 12px; color: #9ca3af;"
-};
-
 const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigger, onReset }) => {
   const [activeTab, setActiveTab] = useState<'preview' | 'html'>('preview');
   const [emailInput, setEmailInput] = useState('');
@@ -37,59 +20,152 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [logs]);
 
+  // --- NEW DESIGN SYSTEM GENERATOR ---
   const generateHtml = (data: DigestData) => {
-    const renderItems = (items: DigestItem[]) => items.map(item => `
-      <div style="${PREVIEW_STYLES.card}">
-        <div style="${PREVIEW_STYLES.cardHeader}">
-           <div style="${PREVIEW_STYLES.badge}">Score: ${item.ai_score} • ${item.ai_score_reason}</div>
-           <div style="${PREVIEW_STYLES.title}">${item.title}</div>
-        </div>
+    const renderItems = (items: DigestItem[], type: 'social' | 'health') => items.map((item, idx) => `
+      <article class="bg-white rounded-none border-b-4 border-indigo-900 p-8 mb-8 relative overflow-hidden group hover:shadow-2xl transition-all duration-300">
         
-        <div style="${PREVIEW_STYLES.summaryCn}">${item.summary_cn}</div>
-        
-        ${item.xiaohongshu_advice ? `
-          <div style="${PREVIEW_STYLES.xhsBox}">
-            <strong>📕 小红书灵感:</strong> ${item.xiaohongshu_advice}
-          </div>
-        ` : ''}
+        <!-- Subtle Gradient Highlight -->
+        <div class="absolute top-0 right-0 w-64 h-64 bg-indigo-50 rounded-full blur-3xl opacity-50 -z-10 translate-x-1/3 -translate-y-1/3"></div>
 
-        <div style="${PREVIEW_STYLES.summaryEn}">${item.summary_en}</div>
-        
-        <div>
-          <a href="${item.source_url}" target="_blank" style="${PREVIEW_STYLES.linkBtn}">Read Source &rarr;</a>
+        <div class="flex flex-col gap-4">
+          <!-- Header: Score & Meta -->
+          <div class="flex items-center justify-between border-b border-gray-100 pb-4">
+             <div class="flex items-center gap-3">
+                <div class="bg-indigo-900 text-white font-mono text-xl font-bold px-4 py-2 shadow-[4px_4px_0px_#cbd5e1]">
+                   ${item.ai_score}
+                </div>
+                <span class="font-serif text-indigo-900 font-bold text-sm tracking-widest border border-indigo-900 px-2 py-1">
+                   ${item.ai_score_reason || '高热度'}
+                </span>
+             </div>
+             <div class="text-gray-400 text-xs font-sans uppercase tracking-widest">
+                <i class="fa-solid fa-clock mr-1"></i> NEWS / ${idx + 1 < 10 ? '0' + (idx + 1) : idx + 1}
+             </div>
+          </div>
+
+          <!-- Title: Noto Serif SC, Large, Bold -->
+          <h2 class="font-serif font-black text-3xl md:text-4xl text-gray-900 leading-tight mt-2">
+            ${item.title}
+          </h2>
+
+          <!-- Xiaohongshu Box (Health Only) -->
+          ${item.xhs_titles && item.xhs_titles.length > 0 ? `
+            <div class="bg-red-50 border-l-8 border-red-500 p-6 my-2 shadow-sm">
+                <div class="flex items-center gap-2 mb-3 text-red-700 font-bold font-sans uppercase text-xs tracking-wider">
+                    <i class="fa-brands fa-instagram text-lg"></i> Red Note Strategy
+                </div>
+                <ul class="space-y-2">
+                    ${item.xhs_titles.map(t => `
+                        <li class="font-serif font-bold text-red-900 text-lg flex items-start gap-2">
+                            <i class="fa-solid fa-bolt text-red-400 mt-1 text-sm"></i> ${t}
+                        </li>
+                    `).join('')}
+                </ul>
+            </div>
+          ` : ''}
+
+          <!-- Bilingual Content -->
+          <div class="space-y-4 mt-2">
+             <p class="font-serif font-bold text-lg text-gray-800 leading-relaxed text-justify border-l-2 border-indigo-200 pl-4">
+                ${item.summary_cn}
+             </p>
+             <p class="font-sans font-light text-sm text-gray-500 italic leading-relaxed pl-4">
+                ${item.summary_en}
+             </p>
+          </div>
+
+          <!-- Footer: Link & Tags -->
+          <div class="flex flex-wrap items-center justify-between pt-6 mt-4 border-t border-gray-100 gap-4">
+             <div class="flex gap-2">
+                ${(item.tags || []).map(t => `
+                    <span class="font-sans text-[10px] font-bold text-indigo-400 uppercase tracking-widest bg-indigo-50 px-2 py-1 rounded-sm">#${t}</span>
+                `).join('')}
+             </div>
+             <a href="${item.source_url}" target="_blank" class="bg-gray-900 text-white font-sans font-bold text-xs px-6 py-3 uppercase tracking-widest hover:bg-indigo-600 transition-colors flex items-center gap-2">
+                Read Source <i class="fa-solid fa-arrow-right-long"></i>
+             </a>
+          </div>
         </div>
-      </div>
+      </article>
     `).join('');
 
     return `
       <!DOCTYPE html>
-      <html>
+      <html lang="zh-CN">
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Hajimi Daily</title>
+        <title>Hajimi Daily Digest</title>
+        <!-- Tailwind CSS -->
+        <script src="https://cdn.tailwindcss.com"></script>
+        <!-- Font Awesome -->
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+        <!-- Google Fonts: Noto Serif SC (Chinese) & Poppins (English) -->
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@700;900&family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+        
+        <style>
+            body { background-color: #f1f5f9; }
+            .font-serif { font-family: 'Noto Serif SC', serif; }
+            .font-sans { font-family: 'Poppins', sans-serif; }
+            /* Custom scrollbar */
+            ::-webkit-scrollbar { width: 8px; }
+            ::-webkit-scrollbar-track { background: #f1f5f9; }
+            ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+            ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        </style>
       </head>
-      <body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: sans-serif;">
-        <div style="width: 100%; display: flex; justify-content: center; padding: 20px 0;">
-            <div style="${PREVIEW_STYLES.container}">
-            <div style="${PREVIEW_STYLES.header}">
-                <h1 style="${PREVIEW_STYLES.headerTitle}">HAJIMI DAILY</h1>
-                <div style="${PREVIEW_STYLES.headerMeta}">
-                ${new Date().toLocaleDateString()} | INTELLIGENT DIGEST
+      <body class="antialiased text-gray-900 pb-20">
+        
+        <!-- Hero Header -->
+        <header class="bg-indigo-900 text-white py-20 px-4 mb-12 relative overflow-hidden">
+             <div class="absolute top-0 left-0 w-full h-full opacity-10" style="background-image: radial-gradient(#ffffff 1px, transparent 1px); background-size: 20px 20px;"></div>
+             <div class="max-w-4xl mx-auto text-center relative z-10">
+                <div class="inline-block border-2 border-indigo-400 px-4 py-1 mb-4 font-sans text-xs tracking-[0.3em] text-indigo-300 uppercase">
+                    Daily Intelligence
                 </div>
-            </div>
+                <h1 class="font-serif font-black text-6xl md:text-8xl mb-4 tracking-tight">
+                    HAJIMI<span class="text-indigo-400">.</span>DAILY
+                </h1>
+                <p class="font-sans text-indigo-200 text-sm tracking-widest uppercase">
+                    ${new Date().toLocaleDateString('zh-CN')} &bull; CURATED BY AI
+                </p>
+             </div>
+        </header>
+
+        <main class="max-w-3xl mx-auto px-4">
             
-            <div style="${PREVIEW_STYLES.sectionTitle}">🌍 Global Trends</div>
-            ${renderItems(data.social)}
-            
-            <div style="${PREVIEW_STYLES.sectionTitle}">🧬 Health & Science (Creator Mode)</div>
-            ${renderItems(data.health)}
-            
-            <div style="${PREVIEW_STYLES.footer}">
-                Generated by Hajimi Automation
+            <!-- Section 1: Global -->
+            <div class="mb-16">
+                <div class="flex items-center gap-4 mb-8">
+                    <div class="h-1 bg-gray-900 flex-1"></div>
+                    <h2 class="font-sans font-bold text-4xl text-gray-900 uppercase tracking-tighter">
+                        <i class="fa-solid fa-earth-americas text-indigo-600 mr-2"></i> Global Trends
+                    </h2>
+                    <div class="h-1 bg-gray-900 flex-1"></div>
+                </div>
+                ${renderItems(data.social, 'social')}
             </div>
+
+            <!-- Section 2: Health -->
+            <div class="mb-16">
+                <div class="flex items-center gap-4 mb-8">
+                    <div class="h-1 bg-gray-900 flex-1"></div>
+                    <h2 class="font-sans font-bold text-4xl text-gray-900 uppercase tracking-tighter">
+                        <i class="fa-solid fa-heart-pulse text-red-600 mr-2"></i> Life & Health
+                    </h2>
+                    <div class="h-1 bg-gray-900 flex-1"></div>
+                </div>
+                ${renderItems(data.health, 'health')}
             </div>
-        </div>
+
+            <footer class="text-center font-sans text-gray-400 text-xs tracking-widest uppercase border-t border-gray-200 pt-12">
+                Generated by Hajimi Automation System &bull; ${new Date().getFullYear()}
+            </footer>
+
+        </main>
       </body>
       </html>
     `;
