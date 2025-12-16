@@ -209,7 +209,7 @@ export const generateDailyDigest = async (
   onLog(`当前日期: ${todayStr}`);
   onLog(`目标新闻日期: ${targetDateStr} (${targetDateHuman})`);
 
-  // UPGRADED PROMPT: Strict Deep Link Policy
+  // UPGRADED PROMPT: Zero Tolerance for Broken Links
   const prompt = `
     You are an automated Daily Information Digest agent.
     
@@ -218,13 +218,12 @@ export const generateDailyDigest = async (
     - **TARGET DATE**: ${targetDateStr}
     - **RULE**: IGNORE sources older than ${targetDateStr}.
     
-    ### URL VALIDATION (HIGHEST PRIORITY)
-    - **DEEP LINKS ONLY**: The 'source_url' MUST lead to a **specific article**.
-    - **NO ROOT DOMAINS**: 
-      - ❌ BAD: "https://www.bbc.com/", "https://www.cnn.com", "https://techcrunch.com"
-      - ✅ GOOD: "https://www.bbc.com/news/world-asia-690123", "https://techcrunch.com/2024/05/20/ai-news-update/"
-    - **VERIFY**: If the Search Tool returns a generic homepage for a topic, **DISCARD THE ITEM**. Do NOT include it.
-    - **NO 404s**: Do not guess links. Use the exact URL from the search result grounding.
+    ### ANTI-HALLUCINATION PROTOCOL (ZERO TOLERANCE)
+    1. **NO GUESSING**: Do NOT construct URLs (e.g., do not invent "cnn.com/2024/...").
+    2. **VERBATIM ONLY**: You MUST use the *exact* URL returned by the Google Search tool.
+    3. **VERIFY**: Check the link before adding it. If the search result is just "www.cnn.com" (Home Page), **DISCARD THE ITEM ENTIRELY**.
+    4. **BETTER EMPTY THAN FAKE**: It is better to return 5 verified items with working deep links than 10 items with 404 links.
+    5. **DEEP LINKS**: URLs must end in an article slug or ID (e.g., .html, /article/..., /news/...).
 
     ### INSTRUCTIONS
     1. **Language**: 
@@ -239,8 +238,8 @@ export const generateDailyDigest = async (
     3. **Scoring**: Range 60-99.
     
     ### TASKS
-    **Task 1: Social/Trends** (10 items)
-    **Task 2: Health/Life** (10 items)
+    **Task 1: Social/Trends** (Find 5-10 VERIFIED items)
+    **Task 2: Health/Life** (Find 5-10 VERIFIED items)
 
     ### OUTPUT FORMAT (JSON ONLY)
     {
@@ -249,7 +248,7 @@ export const generateDailyDigest = async (
           "title": "...", 
           "summary_en": "...", 
           "summary_cn": "...", 
-          "source_url": "https://site.com/YYYY/MM/specific-article-slug", 
+          "source_url": "https://actual-verified-link...", 
           "source_name": "...", 
           "ai_score": 88, 
           "ai_score_reason": "...", 
@@ -270,7 +269,7 @@ export const generateDailyDigest = async (
     messages: [
       { 
           role: "system", 
-          content: "You are a professional editor. You REJECT generic homepage URLs. You ONLY provide deep links to specific articles from the last 48 hours. Output valid JSON." 
+          content: "You are a professional editor. You have ZERO TOLERANCE for fake or broken links. If you cannot find a specific deep link for a story in the search tools, you MUST SKIP that story. Do not invent URLs." 
       },
       { 
           role: "user", 
@@ -294,7 +293,7 @@ export const generateDailyDigest = async (
     let responseData;
     
     try {
-        onLog("发送请求中 (正在验证深度链接有效性)...");
+        onLog("发送请求中 (严格链接审查模式)...");
         responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
 
     } catch(err: any) {

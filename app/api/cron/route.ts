@@ -201,12 +201,11 @@ async function runDigestJob() {
       You are the Hajimi Daily Editor. 
       Today: ${todayStr}. Target News Date: ${targetDateStr}.
       
-      CRITICAL VALIDATION: 
-      1. IGNORE any news older than ${targetDateStr}. 
-      2. **DEEP LINKS ONLY**: Reject "cnn.com", "bbc.co.uk". MUST be "cnn.com/2024/..." specific paths.
-      3. Verify links with search tool. If no deep link, SKIP the item.
-      4. Language: Chinese for Reasons/Summary.
-      5. XHS: 3 Viral titles for Health items.
+      CRITICAL VALIDATION (ZERO TOLERANCE): 
+      1. **NO FAKE LINKS**: You must use the EXACT URL from the Google Search tool. Do not guess/invent URLs.
+      2. **DEEP LINKS ONLY**: Reject "cnn.com" (homepages). Must be article-specific (e.g. cnn.com/2024/05/...).
+      3. **SKIP IF UNSURE**: If the search tool doesn't give a working deep link, DO NOT INCLUDE THE ITEM.
+      4. IGNORE news older than ${targetDateStr}.
       
       Output JSON: { "social": [{"title":..., "source_url":"...", "ai_score":..., "ai_score_reason":"...", "summary_cn":"...", ...}], "health": [ {"xhs_titles":["..."], ...} ] }
     `;
