@@ -8,34 +8,21 @@ export const dynamic = 'force-dynamic';
 
 const generateId = () => Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
-// --- CLEAN MODERN MOBILE STYLE ---
+// --- CLEAN MOBILE STYLE ---
 const EMAIL_STYLES = {
-  // Fluid container for mobile, max-width for desktop
   container: "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; color: #333333; padding: 0; border: 1px solid #e5e7eb;",
-  
-  // Header
   header: "background-color: #111827; color: #ffffff; padding: 30px 20px; text-align: center;",
   headerTitle: "font-size: 24px; font-weight: 800; margin: 0; letter-spacing: -0.5px;",
   headerMeta: "font-family: monospace; color: #9ca3af; font-size: 12px; margin-top: 8px; text-transform: uppercase;",
-  
-  // Section
   sectionTitle: "background-color: #f3f4f6; color: #111827; padding: 12px 20px; font-size: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #e5e7eb; border-top: 1px solid #e5e7eb;",
-  
-  // Card
   card: "padding: 20px; border-bottom: 1px solid #f3f4f6;",
-  
-  // Flex header simulation for email (using tables or block/inline-block)
   cardTop: "margin-bottom: 8px;",
   title: "font-size: 18px; font-weight: 700; line-height: 1.4; color: #111827; display: block; margin-bottom: 6px; text-decoration: none;",
-  
-  // Badge Style
   badgeContainer: "display: inline-block; background-color: #eff6ff; border: 1px solid #dbeafe; border-radius: 999px; padding: 2px 8px; font-size: 11px; color: #1e40af; font-weight: 600; margin-bottom: 8px;",
-  
   summaryCn: "font-size: 15px; line-height: 1.6; color: #374151; margin-bottom: 6px; display: block;",
   summaryEn: "font-size: 13px; line-height: 1.5; color: #6b7280; font-style: italic; display: block; margin-bottom: 12px;",
-  
+  xhsBox: "background-color: #fff1f2; border-left: 3px solid #f43f5e; padding: 8px 12px; font-size: 12px; color: #881337; margin-bottom: 12px; border-radius: 0 4px 4px 0;",
   linkBtn: "display: inline-block; background-color: #111827; color: #ffffff !important; text-decoration: none; padding: 8px 16px; font-size: 12px; font-weight: 600; border-radius: 6px;",
-  
   footer: "background-color: #f9fafb; padding: 30px 20px; text-align: center; font-size: 12px; color: #9ca3af; border-top: 1px solid #e5e7eb;"
 };
 
@@ -52,6 +39,13 @@ const generateEmailHtml = (data: any) => {
       <span style="${EMAIL_STYLES.summaryCn}">
         ${item.summary_cn}
       </span>
+      
+      ${item.xiaohongshu_advice ? `
+          <div style="${EMAIL_STYLES.xhsBox}">
+            <strong>📕 小红书灵感:</strong> ${item.xiaohongshu_advice}
+          </div>
+      ` : ''}
+
       <span style="${EMAIL_STYLES.summaryEn}">
         ${item.summary_en}
       </span>
@@ -83,7 +77,7 @@ const generateEmailHtml = (data: any) => {
         <div style="${EMAIL_STYLES.sectionTitle}">🌍 Global Trends</div>
         ${data.social && data.social.length > 0 ? renderItems(data.social) : '<div style="padding:20px;">No items found.</div>'}
         
-        <div style="${EMAIL_STYLES.sectionTitle}">🧬 Health & Science</div>
+        <div style="${EMAIL_STYLES.sectionTitle}">🧬 Health & Science (Creator Mode)</div>
         ${data.health && data.health.length > 0 ? renderItems(data.health) : '<div style="padding:20px;">No items found.</div>'}
         
         <div style="${EMAIL_STYLES.footer}">
@@ -104,6 +98,7 @@ const generateEmailText = (data: any) => {
     items.forEach((item, index) => {
       text += `${index + 1}. ${item.title}\n`;
       text += `[Score ${item.ai_score}: ${item.ai_score_reason}]\n`;
+      if (item.xiaohongshu_advice) text += `📕 XHS Tip: ${item.xiaohongshu_advice}\n`;
       text += `Summary: ${item.summary_cn}\n`;
       text += `Link: ${item.source_url}\n\n`;
     });
@@ -181,10 +176,10 @@ async function runDigestJob() {
       
       CRITICAL:
       1. LINKS MUST BE VALID AND CLICKABLE. Use the search tool to verify URLs. DO NOT HALLUCINATE LINKS.
-      2. Bilingual Summaries (CN/EN).
-      3. Reason for AI Score (3-5 words).
+      2. SCORING: Use curved grading (60-99). Give reason.
+      3. XIAOHONGSHU (Red Note): Provide 'xiaohongshu_advice' (Title + Angle) for items, especially Health.
       
-      Output JSON: { "social": [{"title":..., "source_url":"...", "ai_score":..., "ai_score_reason":"...", ...}], "health": [...] }
+      Output JSON: { "social": [{"title":..., "source_url":"...", "ai_score":..., "ai_score_reason":"...", "xiaohongshu_advice":"...", ...}], "health": [...] }
     `;
 
     const cleanBaseUrl = baseUrl.replace(/\/+$/, '').endsWith('/v1') ? baseUrl : `${baseUrl}/v1`;

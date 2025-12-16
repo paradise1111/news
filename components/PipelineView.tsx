@@ -10,7 +10,6 @@ interface PipelineViewProps {
   onReset: () => void;
 }
 
-// CLEAN MOBILE STYLE for Web Preview
 const PREVIEW_STYLES = {
   container: "width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; color: #333; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; border: 1px solid #e5e7eb; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);",
   header: "background-color: #111827; color: #ffffff; padding: 30px 20px; text-align: center;",
@@ -23,6 +22,7 @@ const PREVIEW_STYLES = {
   title: "font-size: 18px; font-weight: 700; line-height: 1.4; color: #111827; margin: 0 0 4px 0;",
   summaryCn: "font-size: 15px; line-height: 1.6; color: #374151; margin-bottom: 6px;",
   summaryEn: "font-size: 13px; line-height: 1.5; color: #6b7280; font-style: italic; margin-bottom: 12px;",
+  xhsBox: "background-color: #fff1f2; border-left: 3px solid #f43f5e; padding: 8px 12px; font-size: 12px; color: #881337; margin-bottom: 12px; border-radius: 0 4px 4px 0;",
   linkBtn: "display: inline-block; background-color: #111827; color: #fff; text-decoration: none; padding: 8px 16px; font-size: 12px; font-weight: 600; border-radius: 6px; transition: opacity 0.2s;",
   footer: "background-color: #f9fafb; padding: 30px 20px; text-align: center; font-size: 12px; color: #9ca3af;"
 };
@@ -46,6 +46,13 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
         </div>
         
         <div style="${PREVIEW_STYLES.summaryCn}">${item.summary_cn}</div>
+        
+        ${item.xiaohongshu_advice ? `
+          <div style="${PREVIEW_STYLES.xhsBox}">
+            <strong>📕 小红书灵感:</strong> ${item.xiaohongshu_advice}
+          </div>
+        ` : ''}
+
         <div style="${PREVIEW_STYLES.summaryEn}">${item.summary_en}</div>
         
         <div>
@@ -75,7 +82,7 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
             <div style="${PREVIEW_STYLES.sectionTitle}">🌍 Global Trends</div>
             ${renderItems(data.social)}
             
-            <div style="${PREVIEW_STYLES.sectionTitle}">🧬 Health & Science</div>
+            <div style="${PREVIEW_STYLES.sectionTitle}">🧬 Health & Science (Creator Mode)</div>
             ${renderItems(data.health)}
             
             <div style="${PREVIEW_STYLES.footer}">

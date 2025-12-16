@@ -26,7 +26,7 @@ const openAIFetch = async (
 
   console.log(`[Proxy Request] -> ${method} ${targetUrl}`);
 
-  // 180秒客户端超时 (流式传输可以允许更长时间)
+  // 180秒客户端超时
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 180000); 
 
@@ -138,7 +138,7 @@ const openAIFetch = async (
                      console.error("Failed to parse extracted JSON block");
                 }
             }
-            throw new Error("API response was not valid JSON. Please check the 'Logs' for raw output.");
+            throw new Error("API response was not valid JSON.");
         }
     } 
     
@@ -206,7 +206,7 @@ export const generateDailyDigest = async (
 
   onLog(`设定目标日期: ${queryDateStr}`);
 
-  // UPGRADED PROMPT: Stronger emphasis on Link Validity and formatting
+  // UPGRADED PROMPT: Xiaohongshu Strategy + Strict Link Checking + Score Differentiation
   const prompt = `
     You are an automated Daily Information Digest agent.
     
@@ -217,27 +217,31 @@ export const generateDailyDigest = async (
     ### CRITICAL INSTRUCTIONS
     1. **LINKS (PRIORITY #1)**: 
        - You MUST provide a **valid, real, and clickable** 'source_url' for every item. 
-       - **DO NOT** use "example.com" or broken links. 
-       - **VERIFY** the link exists using the search tool. If you cannot find a link, discard the item.
-       - The link must lead directly to the news article or source.
+       - **VERIFY** via the search tool. Do not guess links. If the link is 404, the item is useless.
     
-    2. **VOLUME**: EXACTLY 20 ITEMS total (10 Social, 10 Health).
-    3. **BILINGUAL**: Summaries must be in both English and Chinese.
-    4. **SCORING**: Rate 0-100 based on Impact/Virality.
-    5. **REASON**: Provide a short 3-5 word reason for the score (e.g., "Major policy shift").
+    2. **SCORING (CURVED)**:
+       - **DO NOT** rate everything 90+. 
+       - Use the full range: 60 (Boring) to 99 (Viral/Explosive).
+       - Average items should be ~75.
+       - 'ai_score_reason' must be 3-5 words explaining WHY (e.g., "Niche audience only" or "Global headline").
+    
+    3. **CONTENT CREATION (Xiaohongshu/Red Note)**:
+       - For every item (especially Health), provide 'xiaohongshu_advice'.
+       - This is a tip for a content creator.
+       - Format: "Title Idea: [Clickbait Title] | Angle: [Unique Perspective]"
     
     ### Task 1: Current Events (The "World")
-    - Scope: Economy, Politics, Culture, Global.
+    - Scope: Economy, Politics, Culture.
     - Quantity: 10 items.
 
     ### Task 2: Health & Hygiene (The "Body")
-    - Scope: Public health, medical studies, wellness.
+    - Scope: Public health, medical studies, wellness, diet.
     - Quantity: 10 items.
+    - **Focus**: Find items suitable for "Life Hacks" or "Wellness Tips" content.
 
     ### Output Requirements
     - Strict JSON.
-    - Fields: title, summary_en, summary_cn, source_url, source_name, ai_score, ai_score_reason, tags.
-
+    
     JSON Structure:
     {
       "social": [
@@ -245,10 +249,11 @@ export const generateDailyDigest = async (
           "title": "...", 
           "summary_en": "...", 
           "summary_cn": "...", 
-          "source_url": "https://actual-news-site.com/article/123", 
-          "source_name": "BBC", 
-          "ai_score": 95, 
-          "ai_score_reason": "Global headline", 
+          "source_url": "...", 
+          "source_name": "...", 
+          "ai_score": 82, 
+          "ai_score_reason": "High local interest", 
+          "xiaohongshu_advice": "Title: Why everyone is talking about X... | Angle: Focus on the money aspect",
           "tags": ["Tag1"] 
         }
       ],
@@ -261,7 +266,7 @@ export const generateDailyDigest = async (
     messages: [
       { 
           role: "system", 
-          content: "You are a professional news analyst. Output valid JSON only. Never fabricate URLs." 
+          content: "You are a professional news analyst. Output valid JSON only. Never fabricate URLs. Act as a Content Strategist." 
       },
       { 
           role: "user", 
@@ -285,7 +290,7 @@ export const generateDailyDigest = async (
     let responseData;
     
     try {
-        onLog("发送请求中 (正在搜索真实链接)...");
+        onLog("发送请求中 (搜索链接 + 生成小红书文案建议)...");
         responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
 
     } catch(err: any) {
