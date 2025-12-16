@@ -245,7 +245,7 @@ export const generateDailyDigest = async (
 
   onLog(`设定目标日期: ${queryDateStr}`);
 
-  // UPGRADED PROMPT: Diversity, Scoring, and Volume
+  // UPGRADED PROMPT: 10 + 10 Items, Bilingual, Hajimi Style
   const prompt = `
     You are an automated Daily Information Digest agent acting as a Chief Editor.
     
@@ -254,28 +254,31 @@ export const generateDailyDigest = async (
     **TARGET DATE FOR NEWS: ${targetDateStr} (${queryDateStr}).**
     
     ### CRITICAL INSTRUCTIONS
-    1. **DIVERSITY**: You MUST consult different sources. Do not just pick 5 articles from the same domain.
-    2. **AI SCORING**: Evaluate every story on 4 dimensions: **Novelty, Fun, Virality, Heat**. Calculate an aggregate "AI Score" (0-100).
-    3. **TAGGING**: Assign 2 short, punchy tags for each item (e.g., "🔥 Viral", "🧠 Deep", "😲 Shocking").
+    1. **VOLUME**: You must find EXACTLY 20 ITEMS in total.
+    2. **DIVERSITY**: Consult multiple sources. Do not rely on a single domain.
+    3. **LINKS**: Ensure all source_urls are valid and accessible.
+    4. **BILINGUAL**: The summary MUST include both English and Chinese versions in the JSON.
+    5. **SCORING**: Rate items (0-100) based on Novelty, Fun, Virality, and Heat.
     
-    ### Task 1: Social Media & Trends (The "Pulse")
-    - **Goal**: Identify the TOP 5 trending/viral topics from **${targetDateStr}**.
-    - **Criteria**: High social engagement, surprising, or controversial.
-    - **Quantity**: EXACTLY 5 items.
+    ### Task 1: Current Events (The "World")
+    - **Scope**: Economy, Politics, Culture, and Global Affairs.
+    - **Quantity**: EXACTLY 10 items.
+    - **Criteria**: Major headlines, policy shifts, or cultural phenomena from ${targetDateStr}.
 
-    ### Task 2: Health & Science (The "Breakthroughs")
-    - **Goal**: Find the TOP 5 high-impact medical or science news from **${targetDateStr}**.
-    - **Criteria**: Scientific breakthrough, new study, or weird science.
-    - **Quantity**: EXACTLY 5 items.
+    ### Task 2: Health & Hygiene (The "Body")
+    - **Scope**: Public health, medical breakthroughs, wellness, hygiene, and biology.
+    - **Quantity**: EXACTLY 10 items.
+    - **Criteria**: New studies, health warnings, or wellness trends from ${targetDateStr}.
 
     ### Output Requirements
     1. **Depth**: Concise summary (40-60 words).
-    2. **Translation**: Provide a professional Chinese translation.
+    2. **Translation**: Provide a professional Chinese translation (summary_cn) and English (summary_en).
     3. **Format**: Return STRICT JSON.
     
     JSON Structure:
     {
       "social": [
+        // ... 10 items for Current Events
         { 
           "title": "...", 
           "summary_en": "...", 
@@ -284,10 +287,10 @@ export const generateDailyDigest = async (
           "source_name": "...", 
           "ai_score": 95, 
           "tags": ["Tag1", "Tag2"] 
-        },
+        }
       ],
       "health": [
-        // ... 5 items
+        // ... 10 items for Health & Hygiene
       ]
     }
   `;
