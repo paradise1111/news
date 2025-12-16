@@ -196,16 +196,17 @@ async function runDigestJob() {
     const todayStr = today.toISOString().split('T')[0];
     const targetDateStr = yesterday.toISOString().split('T')[0];
 
-    // UPDATED PROMPT FOR CRON (Matches Service)
+    // UPDATED PROMPT FOR CRON (Matches Service with URL Validation)
     const prompt = `
       You are the Hajimi Daily Editor. 
       Today: ${todayStr}. Target News Date: ${targetDateStr}.
       
-      CRITICAL: 
-      1. IGNORE any news older than ${targetDateStr}. REJECT 2023/2022.
-      2. Verify links with search tool.
-      3. Language: Chinese for Reasons/Summary.
-      4. XHS: 3 Viral titles for Health items.
+      CRITICAL VALIDATION: 
+      1. IGNORE any news older than ${targetDateStr}. 
+      2. **DEEP LINKS ONLY**: Reject "cnn.com", "bbc.co.uk". MUST be "cnn.com/2024/..." specific paths.
+      3. Verify links with search tool. If no deep link, SKIP the item.
+      4. Language: Chinese for Reasons/Summary.
+      5. XHS: 3 Viral titles for Health items.
       
       Output JSON: { "social": [{"title":..., "source_url":"...", "ai_score":..., "ai_score_reason":"...", "summary_cn":"...", ...}], "health": [ {"xhs_titles":["..."], ...} ] }
     `;

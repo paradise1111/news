@@ -209,34 +209,38 @@ export const generateDailyDigest = async (
   onLog(`当前日期: ${todayStr}`);
   onLog(`目标新闻日期: ${targetDateStr} (${targetDateHuman})`);
 
-  // UPGRADED PROMPT: Strict Date, Chinese Reason, 3 XHS Titles, Detailed Content
+  // UPGRADED PROMPT: Strict Deep Link Policy
   const prompt = `
     You are an automated Daily Information Digest agent.
     
-    ### TIME CONTEXT (CRITICAL)
+    ### TIME CONTEXT (ABSOLUTE)
     - **Current Date**: ${todayStr}
-    - **TARGET NEWS DATE**: ${targetDateStr}
-    - **STRICT RULE**: IGNORE ANY source dated before ${targetDateStr}. If a search result is from 2021, 2022, 2023, or early 2024, **REJECT IT**. Only select news from the last 48 hours.
+    - **TARGET DATE**: ${targetDateStr}
+    - **RULE**: IGNORE sources older than ${targetDateStr}.
     
+    ### URL VALIDATION (HIGHEST PRIORITY)
+    - **DEEP LINKS ONLY**: The 'source_url' MUST lead to a **specific article**.
+    - **NO ROOT DOMAINS**: 
+      - ❌ BAD: "https://www.bbc.com/", "https://www.cnn.com", "https://techcrunch.com"
+      - ✅ GOOD: "https://www.bbc.com/news/world-asia-690123", "https://techcrunch.com/2024/05/20/ai-news-update/"
+    - **VERIFY**: If the Search Tool returns a generic homepage for a topic, **DISCARD THE ITEM**. Do NOT include it.
+    - **NO 404s**: Do not guess links. Use the exact URL from the search result grounding.
+
     ### INSTRUCTIONS
-    1. **LINKS**: Must be VALID and CLICKABLE. Verify using Google Search tool. No 404s.
-    2. **LANGUAGE**: 
-       - 'ai_score_reason': Must be in **CHINESE**.
-       - 'summary_cn': Fluent, native-level Chinese. **Length: 80-120 words** (Not just a headline, give details).
+    1. **Language**: 
+       - 'ai_score_reason': Chinese.
+       - 'summary_cn': Detailed Chinese (80-120 words).
        - 'summary_en': Concise English.
     
-    3. **SCORING**: 
-       - Differentiate scores (60-99).
-       - Reason in Chinese (e.g., "涉及重大民生政策", "小众趣味话题").
+    2. **XHS Strategy (Health/Life)**:
+       - 'xhs_titles': Array of 3 viral/clickbait titles.
+       - Tone: "Emotional", "Urgent", "Revealing".
     
-    4. **XIAOHONGSHU (RED NOTE) STRATEGY**:
-       - For Health/Lifestyle items, you act as a viral content creator.
-       - Provide 'xhs_titles': An array of **3 different** clickbait/viral titles.
-       - Style: Emotional, exaggerated, using keywords like "救命", "一定要看", "真相".
+    3. **Scoring**: Range 60-99.
     
     ### TASKS
-    **Task 1: Social/Trends** (10 items) - Economy, Tech, Society.
-    **Task 2: Health/Life** (10 items) - Wellness, Diet, Biology. Focus on things people want to share on Red Note.
+    **Task 1: Social/Trends** (10 items)
+    **Task 2: Health/Life** (10 items)
 
     ### OUTPUT FORMAT (JSON ONLY)
     {
@@ -244,11 +248,11 @@ export const generateDailyDigest = async (
         { 
           "title": "...", 
           "summary_en": "...", 
-          "summary_cn": "Detailed summary here...", 
-          "source_url": "...", 
+          "summary_cn": "...", 
+          "source_url": "https://site.com/YYYY/MM/specific-article-slug", 
           "source_name": "...", 
           "ai_score": 88, 
-          "ai_score_reason": "中文打分理由...", 
+          "ai_score_reason": "...", 
           "tags": ["Tag1"] 
         }
       ],
@@ -266,7 +270,7 @@ export const generateDailyDigest = async (
     messages: [
       { 
           role: "system", 
-          content: "You are a professional editor. You ONLY accept news from the last 24-48 hours. You REJECT old news. You output strictly valid JSON." 
+          content: "You are a professional editor. You REJECT generic homepage URLs. You ONLY provide deep links to specific articles from the last 48 hours. Output valid JSON." 
       },
       { 
           role: "user", 
@@ -290,7 +294,7 @@ export const generateDailyDigest = async (
     let responseData;
     
     try {
-        onLog("发送请求中 (严格过滤日期 + 生成三款爆款标题)...");
+        onLog("发送请求中 (正在验证深度链接有效性)...");
         responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
 
     } catch(err: any) {
@@ -300,7 +304,7 @@ export const generateDailyDigest = async (
         if (
             errorMsg.includes("tool") || 
             errorMsg.includes("googlesearch") || 
-            errorMsg.includes("response_format") ||
+            errorMsg.includes("response_format") || 
             errorMsg.includes("bad_response_status_code") || 
             errorMsg.includes("openai_error")
         ) {
