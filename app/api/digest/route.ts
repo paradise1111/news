@@ -2,114 +2,79 @@
 import { NextResponse } from 'next/server';
 import { Resend } from 'resend';
 
-// Vercel Serverless Function 配置
 export const maxDuration = 60; 
 export const dynamic = 'force-dynamic';
 
 const generateId = () => Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
-// MOBILE-FRIENDLY SKETCH STYLE (INLINE CSS)
+// CLEAN MOBILE STYLE (Sync with Cron)
 const EMAIL_STYLES = {
-  // Global Container: Use width: 100% and max-width for responsiveness
-  container: "font-family: 'Verdana', 'Microsoft YaHei', sans-serif; width: 100%; max-width: 600px; margin: 0 auto; background-color: #fdfbf7; color: #333333; padding: 15px; border: 1px solid #e0e0e0; box-sizing: border-box;",
-  
-  // Header
-  header: "text-align: center; margin-bottom: 30px; border-bottom: 2px dashed #999; padding-bottom: 20px;",
-  headerTitle: "font-size: 26px; font-weight: bold; margin: 0; color: #333; text-transform: uppercase; letter-spacing: 1px;",
-  headerMeta: "font-family: monospace; color: #666; font-size: 13px; margin-top: 5px;",
-  
-  // Section Headers
-  sectionContainer: "margin-bottom: 40px;",
-  sectionTitle: "background-color: #333; color: #fff; padding: 6px 12px; font-size: 16px; font-weight: bold; display: inline-block; margin-bottom: 15px; border-radius: 4px; letter-spacing: 1px; max-width: 90%;",
-  
-  // Cards
-  card: "background-color: #ffffff; border: 2px solid #444; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 4px 4px 0px #ddd;",
-  
-  // Card Details - Using block layout with floats/inline-blocks for better email client support than flexbox
-  cardHeader: "margin-bottom: 10px; overflow: hidden;",
-  
-  cardTitle: "font-size: 18px; font-weight: bold; line-height: 1.3; color: #000; margin: 0; margin-bottom: 8px;",
-  
-  // Score Reason Box
-  scoreBox: "display: inline-block; background-color: #ffeb3b; border: 1px solid #333; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-family: monospace; margin-bottom: 8px;",
-  
-  tags: "margin-bottom: 10px; font-size: 12px; font-family: monospace;",
-  tag: "display: inline-block; background-color: #eee; padding: 2px 6px; border-radius: 4px; margin-right: 4px; margin-bottom: 4px; border: 1px solid #ccc; color: #555;",
-  
-  summaryCn: "font-size: 15px; line-height: 1.6; color: #222; margin-bottom: 6px; font-weight: 500;",
-  summaryEn: "color: #777; font-size: 13px; font-style: italic; margin-bottom: 12px;",
-  
-  linkBtn: "display: inline-block; background-color: #333; color: #ffffff !important; text-decoration: none; padding: 10px 14px; font-size: 12px; font-weight: bold; border-radius: 4px; margin-top: 5px;",
-  
-  footer: "text-align: center; font-size: 12px; color: #aaa; margin-top: 40px; border-top: 1px solid #ddd; padding-top: 20px; font-family: monospace;"
+  container: "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; width: 100%; max-width: 600px; margin: 0 auto; background-color: #ffffff; color: #333333; padding: 0; border: 1px solid #e5e7eb;",
+  header: "background-color: #111827; color: #ffffff; padding: 30px 20px; text-align: center;",
+  headerTitle: "font-size: 24px; font-weight: 800; margin: 0; letter-spacing: -0.5px;",
+  headerMeta: "font-family: monospace; color: #9ca3af; font-size: 12px; margin-top: 8px; text-transform: uppercase;",
+  sectionTitle: "background-color: #f3f4f6; color: #111827; padding: 12px 20px; font-size: 16px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #e5e7eb; border-top: 1px solid #e5e7eb;",
+  card: "padding: 20px; border-bottom: 1px solid #f3f4f6;",
+  cardTop: "margin-bottom: 8px;",
+  title: "font-size: 18px; font-weight: 700; line-height: 1.4; color: #111827; display: block; margin-bottom: 6px; text-decoration: none;",
+  badgeContainer: "display: inline-block; background-color: #eff6ff; border: 1px solid #dbeafe; border-radius: 999px; padding: 2px 8px; font-size: 11px; color: #1e40af; font-weight: 600; margin-bottom: 8px;",
+  summaryCn: "font-size: 15px; line-height: 1.6; color: #374151; margin-bottom: 6px; display: block;",
+  summaryEn: "font-size: 13px; line-height: 1.5; color: #6b7280; font-style: italic; display: block; margin-bottom: 12px;",
+  linkBtn: "display: inline-block; background-color: #111827; color: #ffffff !important; text-decoration: none; padding: 8px 16px; font-size: 12px; font-weight: 600; border-radius: 6px;",
+  footer: "background-color: #f9fafb; padding: 30px 20px; text-align: center; font-size: 12px; color: #9ca3af; border-top: 1px solid #e5e7eb;"
 };
 
 const generateEmailHtml = (data: any) => {
   const renderItems = (items: any[]) => items.map(item => `
     <div style="${EMAIL_STYLES.card}">
-      <div style="${EMAIL_STYLES.cardHeader}">
-         <div style="${EMAIL_STYLES.cardTitle}">${item.title}</div>
-         <div style="${EMAIL_STYLES.scoreBox}">
-            <b>${item.ai_score}</b> <span style="border-left:1px solid #000; margin-left:4px; padding-left:4px;">${item.ai_score_reason || 'Score'}</span>
+      <div style="${EMAIL_STYLES.cardTop}">
+         <div style="${EMAIL_STYLES.badgeContainer}">
+             Score: ${item.ai_score} • ${item.ai_score_reason || 'Trending'}
          </div>
+         <a href="${item.source_url}" style="${EMAIL_STYLES.title}" target="_blank">${item.title}</a>
       </div>
       
-      <div style="${EMAIL_STYLES.tags}">
-        ${(item.tags || []).map((tag: string) => `<span style="${EMAIL_STYLES.tag}">${tag}</span>`).join('')}
-      </div>
-
-      <div style="${EMAIL_STYLES.summaryCn}">💡 ${item.summary_cn}</div>
-      <div style="${EMAIL_STYLES.summaryEn}">${item.summary_en}</div>
+      <span style="${EMAIL_STYLES.summaryCn}">
+        ${item.summary_cn}
+      </span>
+      <span style="${EMAIL_STYLES.summaryEn}">
+        ${item.summary_en}
+      </span>
       
-      <div>
-        <a href="${item.source_url}" target="_blank" style="${EMAIL_STYLES.linkBtn}">🔗 READ SOURCE</a>
+      <div style="margin-top: 8px;">
+        <a href="${item.source_url}" target="_blank" style="${EMAIL_STYLES.linkBtn}">Read Source &rarr;</a>
       </div>
     </div>
   `).join('');
 
   return `
     <!DOCTYPE html>
-    <html lang="zh-CN">
+    <html lang="en">
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Hajimi Morning Report</title>
+      <title>Hajimi Daily</title>
     </head>
-    <body style="margin: 0; padding: 0; background-color: #f0f0f0; -webkit-font-smoothing: antialiased;">
+    <body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
       <center>
-      <!-- Outlook wrapper -->
-      <!--[if mso]>
-      <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" align="center">
-      <tr>
-      <td>
-      <![endif]-->
       <div style="${EMAIL_STYLES.container}">
         <div style="${EMAIL_STYLES.header}">
-          <h1 style="${EMAIL_STYLES.headerTitle}">📝 HAJIMI REPORT</h1>
+          <h1 style="${EMAIL_STYLES.headerTitle}">HAJIMI DAILY</h1>
           <div style="${EMAIL_STYLES.headerMeta}">
-             📅 ${new Date().toLocaleDateString('zh-CN')} | DIGITAL EDITION
+             ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }).toUpperCase()} • INTELLIGENT DIGEST
           </div>
         </div>
         
-        <div style="${EMAIL_STYLES.sectionContainer}">
-             <div style="${EMAIL_STYLES.sectionTitle}">🔥 TRENDS & CULTURE</div>
-             ${data.social && data.social.length > 0 ? renderItems(data.social) : '<p>暂无内容</p>'}
-        </div>
+        <div style="${EMAIL_STYLES.sectionTitle}">🌍 Global Trends</div>
+        ${data.social && data.social.length > 0 ? renderItems(data.social) : '<div style="padding:20px;">No items found.</div>'}
         
-        <div style="${EMAIL_STYLES.sectionContainer}">
-             <div style="${EMAIL_STYLES.sectionTitle}">🧬 HEALTH & SCIENCE</div>
-             ${data.health && data.health.length > 0 ? renderItems(data.health) : '<p>暂无内容</p>'}
-        </div>
+        <div style="${EMAIL_STYLES.sectionTitle}">🧬 Health & Science</div>
+        ${data.health && data.health.length > 0 ? renderItems(data.health) : '<div style="padding:20px;">No items found.</div>'}
         
         <div style="${EMAIL_STYLES.footer}">
-          GENERATED BY 哈基米 AUTOMATION
+          Generated by Hajimi Automation System
         </div>
       </div>
-      <!--[if mso]>
-      </td>
-      </tr>
-      </table>
-      <![endif]-->
       </center>
     </body>
     </html>
@@ -117,8 +82,7 @@ const generateEmailHtml = (data: any) => {
 };
 
 const generateEmailText = (data: any) => {
-  let text = `HAJIMI MORNING REPORT\nDATE: ${new Date().toLocaleDateString('zh-CN')}\n\n`;
-
+  let text = `HAJIMI DAILY\nDATE: ${new Date().toLocaleDateString()}\n\n`;
   const processSection = (title: string, items: any[]) => {
     text += `=== ${title} ===\n\n`;
     if (!items || items.length === 0) {
@@ -132,11 +96,9 @@ const generateEmailText = (data: any) => {
       text += `LINK: ${item.source_url}\n\n`;
     });
   };
-
-  processSection("TRENDS", data.social);
+  processSection("GLOBAL", data.social);
   processSection("HEALTH", data.health);
-  
-  text += "\n----------------\nGENERATED BY 哈基米 AUTOMATION\n";
+  text += "\n----------------\nGenerated by Hajimi Automation\n";
   return text;
 };
 
@@ -153,7 +115,7 @@ export async function POST(request: Request) {
 
     const htmlContent = generateEmailHtml(digestData);
     const textContent = generateEmailText(digestData);
-    const subjectLine = `Hajimi Report #${new Date().toISOString().split('T')[0]}`;
+    const subjectLine = `Hajimi Daily #${new Date().toISOString().split('T')[0]}`;
 
     console.log(`Sending to ${recipients.length} recipients...`);
 
