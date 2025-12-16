@@ -146,8 +146,14 @@ export async function GET(request: Request) {
     }
 
     const aiJson = await aiRes.json();
+    
+    // Check for API-level errors inside 200 response
+    if (aiJson.error) {
+        throw new Error(`AI API Error (in body): ${aiJson.error.message || JSON.stringify(aiJson.error)}`);
+    }
+
     const content = aiJson.choices?.[0]?.message?.content;
-    if (!content) throw new Error("AI response content is empty");
+    if (!content) throw new Error("AI response content is empty or missing choices");
 
     // 解析 JSON
     let digestData;
@@ -155,8 +161,15 @@ export async function GET(request: Request) {
     try {
         digestData = JSON.parse(text);
     } catch (e) {
+        console.warn("[Cron] JSON parse failed, trying regex extraction...");
         const match = text.match(/\{[\s\S]*\}/);
-        if (match) digestData = JSON.parse(match[0]);
+        if (match) {
+             try {
+                 digestData = JSON.parse(match[0]);
+             } catch (e2) {
+                 throw new Error("Failed to parse extracted JSON");
+             }
+        }
         else throw new Error("Failed to parse AI JSON");
     }
 

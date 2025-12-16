@@ -85,10 +85,9 @@ const openAIFetch = async (
                 if (trimmedLine.startsWith('event: error')) {
                     hasError = true;
                 } else if (trimmedLine.startsWith('data: ')) {
-                    const dataContent = trimmedLine.substring(6);
+                    const dataContent = trimmedLine.substring(6); // Remove "data: "
                     
                     if (hasError) {
-                        // 如果前一行是 event: error，这一行就是错误详情
                         try {
                             const errObj = JSON.parse(dataContent);
                             errorMessage = errObj.error || "Proxy Upstream Error";
@@ -96,10 +95,19 @@ const openAIFetch = async (
                             errorMessage = dataContent;
                         }
                     } else {
-                         // 正常数据
+                        // CRITICAL FIX: The proxy sends JSON.stringify(result).
+                        // So dataContent is an escaped JSON string: "{\"id\":...}"
                         try {
                             const rawSegment = JSON.parse(dataContent);
-                            finalJsonString += rawSegment;
+                            // Ensure we don't concatenate null or undefined
+                            if (rawSegment !== null && rawSegment !== undefined) {
+                                if (typeof rawSegment === 'string') {
+                                    finalJsonString += rawSegment;
+                                } else {
+                                    // Fallback if proxy sent raw object structure somehow
+                                    finalJsonString += JSON.stringify(rawSegment);
+                                }
+                            }
                         } catch (e) {
                             console.warn("Parse warning on SSE chunk:", trimmedLine);
                         }
@@ -116,7 +124,13 @@ const openAIFetch = async (
             throw new Error("Stream closed without data");
         }
 
-        return JSON.parse(finalJsonString);
+        // Final Parse
+        try {
+            return JSON.parse(finalJsonString);
+        } catch (e) {
+            console.error("Failed to parse reconstructed JSON. Raw string:", finalJsonString.substring(0, 200) + "...");
+            throw new Error("Proxy response was not valid JSON.");
+        }
     } 
     
     // 降级：如果不是 SSE，按普通 JSON 处理
@@ -197,7 +211,6 @@ export const generateDailyDigest = async (
 
   onLog(`设定目标日期: ${queryDateStr} (昨日热点)`);
 
-  // Prompt updated to enforce yesterday's news, diversity, and link validity
   const prompt = `
     You are an automated Daily Information Digest agent.
     
@@ -226,7 +239,7 @@ export const generateDailyDigest = async (
     ### Output Requirements
     1. **Depth**: Summary must be substantial (60-80 words).
     2. **Translation**: Provide a professional Chinese translation.
-    3. **Format**: Return STRICT JSON.
+    3. **Format**: Return STRICT JSON (No Markdown code blocks if possible).
     
     JSON Structure:
     {
@@ -243,23 +256,19 @@ export const generateDailyDigest = async (
     messages: [
       { 
           role: "system", 
-          content: "You are a professional news analyst. Output valid JSON only." 
+          content: "You are a professional news analyst. Output valid JSON only. Do not output markdown tags." 
       },
       { 
           role: "user", 
           content: prompt 
       }
     ],
-    // Only inject tools if it looks like a Gemini model, 
-    // OR rely on the fallback logic below to remove it if the model rejects it.
-    // DeepSeek usually fails with this specific tool format, so the fallback is crucial.
     tools: [
         { googleSearch: {} }
     ],
     response_format: { type: "json_object" }
   };
 
-  // Special handling for DeepSeek models to avoid initial 400 errors if possible
   const isDeepSeek = config.model.toLowerCase().includes('deepseek');
   if (isDeepSeek) {
      console.log("DeepSeek model detected: Removing explicit Google Search tool definition.");
@@ -279,19 +288,16 @@ export const generateDailyDigest = async (
         responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
 
     } catch(err: any) {
-        // Enhance error message visibility and fallback
         const errorMsg = (err.message || '').toLowerCase();
         console.warn("First attempt failed:", errorMsg);
 
-        // Check for specific errors that warrant a retry WITHOUT tools
         const isToolError = errorMsg.includes("tool") || errorMsg.includes("googlesearch") || errorMsg.includes("400") || errorMsg.includes("invalid");
         const isNetworkError = errorMsg.includes("networkerror") || errorMsg.includes("fetch") || errorMsg.includes("stream error");
         const isResponseFormatError = errorMsg.includes("response_format");
 
         if (isToolError || isNetworkError) {
              onLog(`首次请求失败 (${errorMsg})，正在尝试移除工具并降级重试...`);
-             delete payload.tools;
-             // Also remove response format if it might be the cause, but usually tools are the main culprit for timeouts/network errors
+             if (payload.tools) delete payload.tools;
              responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
         }
         else if (isResponseFormatError) {
@@ -304,51 +310,48 @@ export const generateDailyDigest = async (
         }
     }
 
+    if (!responseData) {
+        throw new Error("API Response is null or undefined.");
+    }
+
+    if (responseData.error) {
+        const msg = responseData.error.message || JSON.stringify(responseData.error);
+        throw new Error(`API Returned Error: ${msg}`);
+    }
+
     const content = responseData.choices?.[0]?.message?.content;
     
-    if (!content) {
-        throw new Error("API 返回内容为空。请检查模型权限或重试。");
+    if (typeof content !== 'string') {
+        console.error("Invalid Response Structure:", responseData);
+        throw new Error("Invalid API Response: Missing 'choices' or 'content' field. See console for details.");
     }
 
     onLog("接收到数据，正在解析...");
 
-    let text = content.trim();
-    // 清理 Markdown 代码块
-    if (text.includes("```json")) {
-        text = text.replace(/```json/g, "").replace(/```/g, "");
-    } else if (text.includes("```")) {
-        text = text.replace(/```/g, "");
-    }
-    
-    let data: DigestData;
+    // Remove markdown code blocks if present
+    const cleanContent = content.replace(/```json/g, "").replace(/```/g, "").trim();
+
     try {
-        data = JSON.parse(text);
-    } catch (parseError) {
-        onLog("JSON 解析初步失败，尝试正则提取...");
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            try {
-                data = JSON.parse(jsonMatch[0]);
-            } catch (e) {
-                 const snippet = text.length > 100 ? text.substring(0, 100) + "..." : text;
-                 throw new Error(`无法从返回内容中提取有效 JSON。原始内容预览: ${snippet}`);
+        const data = JSON.parse(cleanContent);
+        
+        // Basic Validation
+        if (!Array.isArray(data.social) && !Array.isArray(data.health)) {
+            // Sometimes it wraps in an extra object
+            const values = Object.values(data);
+            if (values.length > 0 && typeof values[0] === 'object') {
+                 // Try to recover
+                 onLog("检测到非标准 JSON 结构，尝试修复...");
+                 return values[0] as DigestData;
             }
-        } else {
-             const snippet = text.length > 100 ? text.substring(0, 100) + "..." : text;
-             throw new Error(`API 返回了非 JSON 格式数据。预览: ${snippet}`);
+            throw new Error("JSON structure is missing 'social' or 'health' arrays.");
         }
+
+        return data as DigestData;
+
+    } catch (parseError) {
+        console.error("JSON Parse Error. Raw content:", cleanContent);
+        throw new Error(`Failed to parse API JSON response: ${parseError instanceof Error ? parseError.message : String(parseError)}`);
     }
-
-    if (!data.social) data.social = [];
-    if (!data.health) data.health = [];
-
-    // Validation Check
-    if (data.social.length === 0 && data.health.length === 0) {
-        onLog("⚠️ 警告: 返回的数据列表为空。模型可能未能找到相关新闻。");
-    }
-
-    onLog(`解析成功 (社交: ${data.social.length}条, 健康: ${data.health.length}条)。`);
-    return data;
 
   } catch (error: any) {
     onLog(`任务失败: ${error.message}`);

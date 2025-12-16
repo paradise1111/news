@@ -64,12 +64,22 @@ export async function POST(req: Request) {
 
           if (!upstreamRes.ok) {
             const errText = await upstreamRes.text();
-            const errData = JSON.stringify({ error: `Upstream ${upstreamRes.status}: ${errText}` });
-            controller.enqueue(encoder.encode(`event: error\ndata: ${errData}\n\n`));
+            // Try to parse error as JSON if possible to make it cleaner
+            let errDataStr;
+            try {
+                const errJson = JSON.parse(errText);
+                errDataStr = JSON.stringify(errJson);
+            } catch {
+                errDataStr = JSON.stringify({ error: `Upstream ${upstreamRes.status}: ${errText}` });
+            }
+            controller.enqueue(encoder.encode(`event: error\ndata: ${errDataStr}\n\n`));
           } else {
             const result = await upstreamRes.text();
+            // IMPORTANT: If result is empty, send explicit empty JSON string to prevent client "null" concatenation
+            const safeResult = result || "{}"; 
+            
             // 将整个 JSON 响应作为字符串再次序列化
-            const safePayload = JSON.stringify(result);
+            const safePayload = JSON.stringify(safeResult);
             controller.enqueue(encoder.encode(`data: ${safePayload}\n\n`));
           }
         } catch (err: any) {
