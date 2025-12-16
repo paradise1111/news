@@ -30,41 +30,37 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing targetUrl parameter' }, { status: 400 });
     }
 
-    // --- 核心修改：使用 SSE (Server-Sent Events) 保持连接活跃 ---
+    // --- 核心修改：流式透传与心跳保活 ---
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
         
-        // 1. 立即发送首字节，满足 Vercel Edge 的 TTFB 要求
+        // 1. 立即发送首字节，满足 Vercel Edge 的 TTFB 要求，防止立即超时
         controller.enqueue(encoder.encode(": start_stream\n\n"));
         
-        // Add a micro-delay to ensure headers are flushed to client before we potentially block on fetch
-        await new Promise(r => setTimeout(r, 50));
-
-        // 2. 设置心跳定时器 (每 3 秒发送一次注释行) - Increased frequency
-        const intervalId = setInterval(() => {
-          try {
-            controller.enqueue(encoder.encode(": keep-alive\n\n"));
-          } catch (e) {
-            clearInterval(intervalId);
-          }
-        }, 3000);
+        // 用于控制心跳的定时器
+        // In Edge runtime, setInterval returns a number, not NodeJS.Timeout
+        let intervalId: any = null;
 
         try {
-          console.log(`[Edge Proxy] Starting Long-Poll Fetch: ${targetUrl}`);
+          console.log(`[Edge Proxy] Fetching: ${targetUrl} (Stream Mode)`);
           
+          // 启动心跳 (每 5 秒一次)，防止在 fetch 等待期间连接断开
+          intervalId = setInterval(() => {
+             try { controller.enqueue(encoder.encode(": keep-alive\n\n")); } catch { /* ignore */ }
+          }, 5000);
+
           const upstreamRes = await fetch(targetUrl, {
             method: method || 'POST',
             headers: headers || {},
             body: body ? JSON.stringify(body) : undefined,
           });
 
-          // 收到上游响应后，停止心跳
-          clearInterval(intervalId);
+          // 收到响应头后，清除心跳，准备传输真实数据
+          if (intervalId) clearInterval(intervalId);
 
           if (!upstreamRes.ok) {
             const errText = await upstreamRes.text();
-            // Try to parse error as JSON if possible to make it cleaner
             let errDataStr;
             try {
                 const errJson = JSON.parse(errText);
@@ -73,17 +69,33 @@ export async function POST(req: Request) {
                 errDataStr = JSON.stringify({ error: `Upstream ${upstreamRes.status}: ${errText}` });
             }
             controller.enqueue(encoder.encode(`event: error\ndata: ${errDataStr}\n\n`));
-          } else {
-            const result = await upstreamRes.text();
-            // IMPORTANT: If result is empty, send explicit empty JSON string to prevent client "null" concatenation
-            const safeResult = result || "{}"; 
-            
-            // 将整个 JSON 响应作为字符串再次序列化
-            const safePayload = JSON.stringify(safeResult);
-            controller.enqueue(encoder.encode(`data: ${safePayload}\n\n`));
+            controller.close();
+            return;
           }
+
+          // 2. 处理上游响应
+          const contentType = upstreamRes.headers.get('content-type') || '';
+          
+          if (contentType.includes('text/event-stream') && upstreamRes.body) {
+              // --- 情况 A: 上游也是流式 (Streaming) ---
+              // 直接管道透传，这是解决 524 错误的关键
+              const reader = upstreamRes.body.getReader();
+              while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  controller.enqueue(value);
+              }
+          } else {
+              // --- 情况 B: 上游是普通 JSON (Non-Streaming) ---
+              // 等待全部接收并包装成 SSE 发送
+              const text = await upstreamRes.text();
+              // 我们手动伪造一个 SSE 事件，让前端统一用一种方式解析
+              const fakeSse = `data: ${JSON.stringify(text)}\n\n`; 
+              controller.enqueue(encoder.encode(fakeSse));
+          }
+
         } catch (err: any) {
-           clearInterval(intervalId);
+           if (intervalId) clearInterval(intervalId);
            const errData = JSON.stringify({ error: 'Proxy Fetch Error: ' + err.message });
            controller.enqueue(encoder.encode(`event: error\ndata: ${errData}\n\n`));
         } finally {
