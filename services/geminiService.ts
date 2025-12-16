@@ -1,3 +1,4 @@
+
 import { AppConfig, DigestData, ModelOption } from "../types";
 import { DEFAULT_MODELS } from "../constants";
 
@@ -237,39 +238,49 @@ export const generateDailyDigest = async (
 
   onLog(`设定目标日期: ${queryDateStr}`);
 
-  // Reduced requirement to 4 items per category to improve speed and avoid timeouts
+  // UPGRADED PROMPT: Diversity, Scoring, and Volume
   const prompt = `
-    You are an automated Daily Information Digest agent.
+    You are an automated Daily Information Digest agent acting as a Chief Editor.
     
     ### CONTEXT
     Today is ${today.toISOString().split('T')[0]}.
     **TARGET DATE FOR NEWS: ${targetDateStr} (${queryDateStr}).**
     
-    ### CRITICAL INSTRUCTION
-    1. **SEARCH**: You MUST use your search tool (if available) to find events specifically from **${targetDateStr}**.
-    2. **DIVERSITY**: Do NOT pick all stories from the same website. 
+    ### CRITICAL INSTRUCTIONS
+    1. **DIVERSITY**: You MUST consult different sources. Do not just pick 5 articles from the same domain.
+    2. **AI SCORING**: Evaluate every story on 4 dimensions: **Novelty, Fun, Virality, Heat**. Calculate an aggregate "AI Score" (0-100).
+    3. **TAGGING**: Assign 2 short, punchy tags for each item (e.g., "🔥 Viral", "🧠 Deep", "😲 Shocking").
     
     ### Task 1: Social Media & Trends (The "Pulse")
-    - **Goal**: Identify the TOP 4 trending topics from **${targetDateStr}**.
-    - **Keywords**: "trending news ${queryDateStr}", "viral stories ${queryDateStr}".
-    - **Quantity**: EXACTLY 4 items.
+    - **Goal**: Identify the TOP 5 trending/viral topics from **${targetDateStr}**.
+    - **Criteria**: High social engagement, surprising, or controversial.
+    - **Quantity**: EXACTLY 5 items.
 
     ### Task 2: Health & Science (The "Breakthroughs")
-    - **Goal**: Find the TOP 4 high-impact medical or science news from **${targetDateStr}**.
-    - **Keywords**: "science news ${queryDateStr}", "health breakthrough ${queryDateStr}".
-    - **Quantity**: EXACTLY 4 items.
+    - **Goal**: Find the TOP 5 high-impact medical or science news from **${targetDateStr}**.
+    - **Criteria**: Scientific breakthrough, new study, or weird science.
+    - **Quantity**: EXACTLY 5 items.
 
     ### Output Requirements
     1. **Depth**: Concise summary (40-60 words).
     2. **Translation**: Provide a professional Chinese translation.
-    3. **Format**: Return STRICT JSON. Do not use Markdown code blocks.
+    3. **Format**: Return STRICT JSON.
     
     JSON Structure:
     {
       "social": [
-        { "title": "...", "summary_en": "...", "summary_cn": "...", "source_url": "...", "source_name": "..." },
+        { 
+          "title": "...", 
+          "summary_en": "...", 
+          "summary_cn": "...", 
+          "source_url": "...", 
+          "source_name": "...", 
+          "ai_score": 95, 
+          "tags": ["Tag1", "Tag2"] 
+        },
       ],
       "health": [
+        // ... 5 items
       ]
     }
   `;
@@ -304,12 +315,11 @@ export const generateDailyDigest = async (
     
     try {
         if (!isDeepSeek) {
-            onLog("发送请求中 (流式传输 + 搜索工具)...");
+            onLog("发送请求中 (流式传输 + 多源搜索 + AI打分)...");
         } else {
             onLog("发送请求中 (DeepSeek 流式模式)...");
         }
         
-        // Note: openAIFetch handles the stream and accumulates it into a final JSON object for us
         responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
 
     } catch(err: any) {
@@ -332,8 +342,6 @@ export const generateDailyDigest = async (
         throw new Error("API Response is null or undefined.");
     }
 
-    // Since we stream, openAIFetch already parsed the final string into JSON. 
-    // We just need to validate the structure.
     const data = responseData;
 
     onLog("数据接收完毕，正在校验结构...");

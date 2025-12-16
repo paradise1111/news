@@ -1,3 +1,4 @@
+
 import { NextResponse } from 'next/server';
 import { Resend } from 'resend';
 
@@ -6,30 +7,42 @@ export const maxDuration = 60;
 // 强制动态执行，不缓存
 export const dynamic = 'force-dynamic';
 
-// 简单的 ID 生成器，替代 crypto.randomUUID 以避免 Node 版本兼容性问题
+// 简单的 ID 生成器
 const generateId = () => Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
 // --- 复用邮件样式生成逻辑 (保持一致性) ---
 const EMAIL_STYLES = {
-  container: "font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f5;",
-  header: "background-color: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;",
-  sectionTitle: "color: #1e3a8a; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; margin-top: 24px; font-size: 1.25rem; font-weight: bold;",
-  card: "background-color: white; padding: 16px; margin-bottom: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);",
-  cardTitle: "font-size: 1.1rem; font-weight: bold; color: #111827; margin-bottom: 8px;",
-  summaryEn: "color: #374151; font-size: 0.95rem; line-height: 1.5; margin-bottom: 8px;",
-  summaryCn: "color: #4b5563; font-size: 0.95rem; line-height: 1.5; border-left: 3px solid #3b82f6; padding-left: 12px; margin-bottom: 12px;",
-  link: "color: #2563eb; text-decoration: none; font-size: 0.875rem;",
-  footer: "text-align: center; font-size: 0.75rem; color: #9ca3af; margin-top: 32px;"
+  container: "font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff; border: 3px solid #000000; color: #000000;",
+  header: "background-color: #000000; color: #ffffff; padding: 24px 16px; border-bottom: 3px solid #000000;",
+  headerTitle: "font-family: 'Impact', 'Arial Black', sans-serif; text-transform: uppercase; font-size: 32px; letter-spacing: -1px; line-height: 1; margin: 0;",
+  headerMeta: "font-family: 'Courier New', Courier, monospace; font-size: 12px; margin-top: 8px; letter-spacing: 1px; opacity: 0.8;",
+  sectionTitle: "background-color: #000000; color: #ffffff; font-family: 'Impact', 'Arial Black', sans-serif; font-size: 18px; text-transform: uppercase; padding: 4px 12px; display: inline-block; margin: 24px 0 0 -3px; transform: skewX(-10deg);",
+  card: "border-bottom: 2px solid #000000; padding: 16px; display: block; background-color: #ffffff;",
+  cardTitle: "font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 900; font-size: 18px; line-height: 1.1; color: #000000; margin: 0; flex: 1;",
+  scoreBadge: "background-color: #000000; color: #ffffff; font-family: 'Courier New', monospace; font-weight: bold; font-size: 14px; padding: 2px 6px; border-radius: 0; min-width: 32px; text-align: center;",
+  tagsRow: "margin-bottom: 8px; font-size: 10px; text-transform: uppercase; font-weight: bold; font-family: monospace;",
+  tag: "display: inline-block; background-color: #f0f0f0; border: 1px solid #000; padding: 1px 4px; margin-right: 4px; color: #000;",
+  summaryCn: "font-family: Georgia, 'Times New Roman', serif; font-size: 15px; line-height: 1.4; color: #000000; margin-bottom: 6px; font-weight: 500;",
+  footer: "border-top: 3px solid #000000; background-color: #f4f4f4; padding: 20px; text-align: center; font-family: 'Courier New', monospace; font-size: 11px; color: #000000; font-weight: bold; text-transform: uppercase;"
 };
 
 const generateEmailHtml = (data: any) => {
   const renderItems = (items: any[]) => items.map(item => `
     <div style="${EMAIL_STYLES.card}">
-      <div style="${EMAIL_STYLES.cardTitle}">${item.title}</div>
-      <div style="${EMAIL_STYLES.summaryEn}">${item.summary_en}</div>
+      <div style="margin-bottom: 8px;">
+         <div style="float: right; ${EMAIL_STYLES.scoreBadge}">${item.ai_score || '-'}</div>
+         <div style="${EMAIL_STYLES.cardTitle}">${item.title}</div>
+         <div style="clear: both;"></div>
+      </div>
+      
+      <div style="${EMAIL_STYLES.tagsRow}">
+        ${(item.tags || []).map((tag: string) => `<span style="${EMAIL_STYLES.tag}">${tag}</span>`).join('')}
+        <span style="opacity:0.5; margin-left: 5px;">${item.source_name}</span>
+      </div>
+
       <div style="${EMAIL_STYLES.summaryCn}">${item.summary_cn}</div>
       <div>
-        <a href="${item.source_url}" style="${EMAIL_STYLES.link}" target="_blank">阅读更多 (${item.source_name}) &rarr;</a>
+        <a href="${item.source_url}" style="color: #000; text-decoration: underline; font-size: 11px; font-family: monospace;" target="_blank">READ FULL ARTICLE &rarr;</a>
       </div>
     </div>
   `).join('');
@@ -38,32 +51,38 @@ const generateEmailHtml = (data: any) => {
     <!DOCTYPE html>
     <html lang="zh-CN">
     <head><meta charset="utf-8"><title>Daily Pulse</title></head>
-    <body style="margin: 0; padding: 0; background-color: #f4f4f5;">
+    <body style="margin: 0; padding: 0; background-color: #f4f4f4;">
       <div style="${EMAIL_STYLES.container}">
         <div style="${EMAIL_STYLES.header}">
-          <h1 style="margin:0; font-size: 24px;">Daily Pulse 日报</h1>
-          <p style="margin: 8px 0 0 0; opacity: 0.9;">${new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+          <h1 style="${EMAIL_STYLES.headerTitle}">Daily Pulse</h1>
+          <div style="${EMAIL_STYLES.headerMeta}">
+             ISSUE: ${new Date().toLocaleDateString('en-GB').toUpperCase()} <span style="float:right">DIGITAL EDITION</span>
+          </div>
         </div>
-        <div style="${EMAIL_STYLES.sectionTitle}">🔥 社交热点</div>
+        <div style="padding: 0 16px;">
+            <div style="${EMAIL_STYLES.sectionTitle}">PULSE // SOCIAL</div>
+        </div>
         ${data.social && data.social.length > 0 ? renderItems(data.social) : '<p>暂无内容</p>'}
-        <div style="${EMAIL_STYLES.sectionTitle}">🧬 健康前沿</div>
+        <div style="padding: 0 16px;">
+            <div style="${EMAIL_STYLES.sectionTitle}">LAB // SCIENCE</div>
+        </div>
         ${data.health && data.health.length > 0 ? renderItems(data.health) : '<p>暂无内容</p>'}
-        <div style="${EMAIL_STYLES.footer}"><p>由 Gemini 2.5 AI 自动生成</p></div>
+        <div style="${EMAIL_STYLES.footer}"><p>GENERATED BY GEMINI 2.5</p></div>
       </div>
     </body></html>
   `;
 };
 
 const generateEmailText = (data: any) => {
-  let text = `Daily Pulse 日报 - ${new Date().toLocaleDateString('zh-CN')}\n\n`;
+  let text = `DAILY PULSE - DIGITAL EDITION\nISSUE: ${new Date().toLocaleDateString('zh-CN')}\n\n`;
   const processSection = (title: string, items: any[]) => {
     text += `=== ${title} ===\n\n`;
     items.forEach((item, index) => {
-      text += `${index + 1}. ${item.title}\n摘要: ${item.summary_cn}\n链接: ${item.source_url}\n\n`;
+      text += `${index + 1}. ${item.title} [Score: ${item.ai_score}]\n摘要: ${item.summary_cn}\n链接: ${item.source_url}\n\n`;
     });
   };
-  processSection("社交热点", data.social || []);
-  processSection("健康前沿", data.health || []);
+  processSection("PULSE // SOCIAL", data.social || []);
+  processSection("LAB // SCIENCE", data.health || []);
   return text;
 };
 
@@ -104,15 +123,21 @@ export async function GET(request: Request) {
       Today is ${today.toISOString().split('T')[0]}.
       **TARGET DATE: ${targetDateStr} (${queryDateStr}).**
       
-      Tasks:
-      1. Find 5 trending social/tech news from ${targetDateStr}.
-      2. Find 5 health/science breakthroughs from ${targetDateStr}.
+      ### CRITICAL INSTRUCTIONS
+      1. **DIVERSITY**: Consult multiple sources.
+      2. **AI SCORING**: Rate items (0-100) based on Novelty, Fun, Virality, and Heat.
+      3. **TAGS**: Add 2 short tags per item.
       
-      Requirements:
-      - Use Google Search tool if available.
-      - Diverse sources. Valid links.
-      - Output strict JSON: { "social": [...], "health": [...] }
-      - Fields: title, summary_en, summary_cn (Chinese translation), source_url, source_name.
+      Tasks:
+      1. Find 5 trending social/tech news (Social Pulse).
+      2. Find 5 health/science breakthroughs (Science Lab).
+      
+      Output strict JSON: 
+      { 
+        "social": [{ "title": "...", "ai_score": 90, "tags": ["Viral"], ... }], 
+        "health": [...] 
+      }
+      Fields: title, summary_en, summary_cn, source_url, source_name, ai_score, tags.
     `;
 
     // 调用 Gemini API
@@ -182,7 +207,7 @@ export async function GET(request: Request) {
     const resend = new Resend(resendApiKey);
     const htmlContent = generateEmailHtml(digestData);
     const textContent = generateEmailText(digestData);
-    const subjectLine = `Daily Pulse 日报 - ${new Date().toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}`;
+    const subjectLine = `Daily Pulse #${new Date().toISOString().split('T')[0]}`;
 
     console.log(`[Cron] Sending emails to ${recipients.length} recipients (Sequential mode)...`);
 

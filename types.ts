@@ -1,9 +1,12 @@
+
 export interface DigestItem {
   title: string;
   summary_en: string;
   summary_cn: string;
   source_url: string;
   source_name: string;
+  ai_score: number; // 0-100 Score based on Novelty, Fun, Virality, Heat
+  tags: string[];   // e.g. ["🔥 Viral", "🧠 Deep"]
 }
 
 export interface DigestData {

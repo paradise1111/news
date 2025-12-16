@@ -1,3 +1,4 @@
+
 export const DEFAULT_MODELS = [
   // --- 2.5 Series (Latest) ---
   { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
@@ -38,14 +39,29 @@ export const DEFAULT_MODELS = [
   { id: 'gemini', name: 'Gemini (Generic)' }
 ];
 
+// DIGITAL PRINT STYLE: Brutalist, High Contrast, Compact, Information Saturated
 export const MOCK_EMAIL_STYLES = {
-  container: "font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f4f5;",
-  header: "background-color: #2563eb; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0;",
-  sectionTitle: "color: #1e3a8a; border-bottom: 2px solid #e5e7eb; padding-bottom: 8px; margin-top: 24px; font-size: 1.25rem; font-weight: bold;",
-  card: "background-color: white; padding: 16px; margin-bottom: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);",
-  cardTitle: "font-size: 1.1rem; font-weight: bold; color: #111827; margin-bottom: 8px;",
-  summaryEn: "color: #374151; font-size: 0.95rem; line-height: 1.5; margin-bottom: 8px;",
-  summaryCn: "color: #4b5563; font-size: 0.95rem; line-height: 1.5; border-left: 3px solid #3b82f6; padding-left: 12px; margin-bottom: 12px;",
-  link: "color: #2563eb; text-decoration: none; font-size: 0.875rem;",
-  footer: "text-align: center; font-size: 0.75rem; color: #9ca3af; margin-top: 32px;"
+  container: "font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff; border: 3px solid #000000; color: #000000;",
+  
+  header: "background-color: #000000; color: #ffffff; padding: 24px 16px; border-bottom: 3px solid #000000;",
+  headerTitle: "font-family: 'Impact', 'Arial Black', sans-serif; text-transform: uppercase; font-size: 32px; letter-spacing: -1px; line-height: 1; margin: 0;",
+  headerMeta: "font-family: 'Courier New', Courier, monospace; font-size: 12px; margin-top: 8px; letter-spacing: 1px; opacity: 0.8;",
+  
+  sectionTitle: "background-color: #000000; color: #ffffff; font-family: 'Impact', 'Arial Black', sans-serif; font-size: 18px; text-transform: uppercase; padding: 4px 12px; display: inline-block; margin: 24px 0 0 -3px; transform: skewX(-10deg);",
+  
+  card: "border-bottom: 2px solid #000000; padding: 16px; display: block; background-color: #ffffff;",
+  
+  // Compact header line with score
+  cardHeaderRow: "display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 8px;",
+  
+  cardTitle: "font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 900; font-size: 18px; line-height: 1.1; color: #000000; margin: 0; flex: 1;",
+  
+  scoreBadge: "background-color: #000000; color: #ffffff; font-family: 'Courier New', monospace; font-weight: bold; font-size: 14px; padding: 2px 6px; border-radius: 0; min-width: 32px; text-align: center;",
+  
+  tagsRow: "margin-bottom: 8px; font-size: 10px; text-transform: uppercase; font-weight: bold; font-family: monospace;",
+  tag: "display: inline-block; background-color: #f0f0f0; border: 1px solid #000; padding: 1px 4px; margin-right: 4px; color: #000;",
+  
+  summaryCn: "font-family: Georgia, 'Times New Roman', serif; font-size: 15px; line-height: 1.4; color: #000000; margin-bottom: 6px; font-weight: 500;",
+  
+  footer: "border-top: 3px solid #000000; background-color: #f4f4f4; padding: 20px; text-align: center; font-family: 'Courier New', monospace; font-size: 11px; color: #000000; font-weight: bold; text-transform: uppercase;"
 };
