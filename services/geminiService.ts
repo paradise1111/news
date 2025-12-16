@@ -247,7 +247,7 @@ export const generateDailyDigest = async (
 
   // UPGRADED PROMPT: 10 + 10 Items, Bilingual, Hajimi Style
   const prompt = `
-    You are an automated Daily Information Digest agent acting as a Chief Editor.
+    You are an automated Daily Information Digest agent.
     
     ### CONTEXT
     Today is ${today.toISOString().split('T')[0]}.
@@ -256,7 +256,7 @@ export const generateDailyDigest = async (
     ### CRITICAL INSTRUCTIONS
     1. **VOLUME**: You must find EXACTLY 20 ITEMS in total.
     2. **DIVERSITY**: Consult multiple sources. Do not rely on a single domain.
-    3. **LINKS**: Ensure all source_urls are valid and accessible.
+    3. **LINKS**: **EXTREMELY IMPORTANT**: You MUST provide a valid, clickable 'source_url' for every item. Do not hallucinate links. Verify them via search.
     4. **BILINGUAL**: The summary MUST include both English and Chinese versions in the JSON.
     5. **SCORING**: Rate items (0-100) based on Novelty, Fun, Virality, and Heat.
     

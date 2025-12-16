@@ -6,54 +6,57 @@ import { Resend } from 'resend';
 export const maxDuration = 60; 
 export const dynamic = 'force-dynamic';
 
-// 简单的 ID 生成器
 const generateId = () => Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
-// DIGITAL PRINT STYLE (Inline CSS for Email Clients)
+// SKETCH / REPORT STYLE FOR EMAIL CLIENTS (INLINE CSS)
 const EMAIL_STYLES = {
-  container: "font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff; border: 3px solid #000000; color: #000000;",
+  // Global Container - Beige Paper Look
+  container: "font-family: 'Verdana', 'Helvetica', sans-serif; max-width: 620px; margin: 0 auto; background-color: #fdfbf7; color: #333333; padding: 20px; border: 1px solid #e0e0e0;",
   
-  header: "background-color: #000000; color: #ffffff; padding: 24px 16px; border-bottom: 3px solid #000000;",
-  headerTitle: "font-family: 'Impact', 'Arial Black', sans-serif; text-transform: uppercase; font-size: 32px; letter-spacing: -1px; line-height: 1; margin: 0;",
-  headerMeta: "font-family: 'Courier New', Courier, monospace; font-size: 12px; margin-top: 8px; letter-spacing: 1px; opacity: 0.8;",
+  // Header
+  header: "text-align: center; margin-bottom: 30px; border-bottom: 2px dashed #999; padding-bottom: 20px;",
+  headerTitle: "font-size: 28px; font-weight: bold; margin: 0; color: #333; text-transform: uppercase; letter-spacing: 2px;",
+  headerMeta: "font-family: monospace; color: #666; font-size: 14px; margin-top: 5px;",
   
-  sectionTitle: "background-color: #000000; color: #ffffff; font-family: 'Impact', 'Arial Black', sans-serif; font-size: 18px; text-transform: uppercase; padding: 4px 12px; display: inline-block; margin: 24px 0 0 -3px; transform: skewX(-10deg);",
+  // Section Headers - Highlight Marker Look
+  sectionContainer: "margin-bottom: 40px;",
+  sectionTitle: "background-color: #333; color: #fff; padding: 6px 12px; font-size: 16px; font-weight: bold; display: inline-block; margin-bottom: 15px; border-radius: 4px; letter-spacing: 1px;",
   
-  card: "border-bottom: 2px solid #000000; padding: 16px; display: block; background-color: #ffffff;",
+  // Cards - White Box on Beige
+  card: "background-color: #ffffff; border: 2px solid #444; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 4px 4px 0px #ddd;",
   
-  cardHeaderRow: "display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 8px;",
-  cardTitle: "font-family: 'Helvetica Neue', Arial, sans-serif; font-weight: 900; font-size: 18px; line-height: 1.1; color: #000000; margin: 0; flex: 1;",
-  scoreBadge: "background-color: #000000; color: #ffffff; font-family: 'Courier New', monospace; font-weight: bold; font-size: 14px; padding: 2px 6px; border-radius: 0; min-width: 32px; text-align: center;",
+  // Card Details
+  cardHeader: "margin-bottom: 10px;",
+  cardTitle: "font-size: 18px; font-weight: bold; line-height: 1.3; color: #000; margin: 0; margin-bottom: 4px;",
   
-  tagsRow: "margin-bottom: 8px; font-size: 10px; text-transform: uppercase; font-weight: bold; font-family: monospace;",
-  tag: "display: inline-block; background-color: #f0f0f0; border: 1px solid #000; padding: 1px 4px; margin-right: 4px; color: #000;",
+  tags: "margin-bottom: 10px; font-size: 12px; font-family: monospace;",
+  tag: "background-color: #eee; padding: 2px 6px; border-radius: 4px; margin-right: 5px; border: 1px solid #ccc; color: #555;",
   
-  summaryCn: "font-family: Georgia, 'Times New Roman', serif; font-size: 15px; line-height: 1.4; color: #000000; margin-bottom: 6px; font-weight: 500;",
+  summaryCn: "font-size: 15px; line-height: 1.6; color: #222; margin-bottom: 6px; font-weight: 500;",
+  summaryEn: "color: #777; font-size: 13px; font-style: italic; margin-bottom: 12px;",
   
-  footer: "border-top: 3px solid #000000; background-color: #f4f4f4; padding: 20px; text-align: center; font-family: 'Courier New', monospace; font-size: 11px; color: #000000; font-weight: bold; text-transform: uppercase;"
+  linkBtn: "display: inline-block; background-color: #333; color: #ffffff !important; text-decoration: none; padding: 8px 12px; font-size: 12px; font-weight: bold; border-radius: 4px;",
+  
+  footer: "text-align: center; font-size: 12px; color: #aaa; margin-top: 40px; border-top: 1px solid #ddd; padding-top: 20px; font-family: monospace;"
 };
 
-// 辅助函数：生成 HTML 字符串
 const generateEmailHtml = (data: any) => {
   const renderItems = (items: any[]) => items.map(item => `
     <div style="${EMAIL_STYLES.card}">
-      <div style="margin-bottom: 8px;">
-         <div style="float: right; ${EMAIL_STYLES.scoreBadge}">${item.ai_score || '-'}</div>
+      <div style="${EMAIL_STYLES.cardHeader}">
          <div style="${EMAIL_STYLES.cardTitle}">${item.title}</div>
-         <div style="clear: both;"></div>
       </div>
       
-      <div style="${EMAIL_STYLES.tagsRow}">
+      <div style="${EMAIL_STYLES.tags}">
+        <span style="float:right; color:#888;">Score: ${item.ai_score}</span>
         ${(item.tags || []).map((tag: string) => `<span style="${EMAIL_STYLES.tag}">${tag}</span>`).join('')}
-        <span style="opacity:0.5; margin-left: 5px;">${item.source_name}</span>
       </div>
 
-      <div style="${EMAIL_STYLES.summaryCn}">
-        <div style="margin-bottom: 6px;">🇨🇳 ${item.summary_cn}</div>
-        <div style="color: #555; font-size: 0.9em;">🇺🇸 ${item.summary_en}</div>
-      </div>
-      <div style="margin-top: 8px;">
-        <a href="${item.source_url}" style="color: #000; text-decoration: underline; font-size: 11px; font-family: monospace;" target="_blank">READ FULL ARTICLE &rarr;</a>
+      <div style="${EMAIL_STYLES.summaryCn}">💡 ${item.summary_cn}</div>
+      <div style="${EMAIL_STYLES.summaryEn}">${item.summary_en}</div>
+      
+      <div style="margin-top: 10px;">
+        <a href="${item.source_url}" target="_blank" style="${EMAIL_STYLES.linkBtn}">🔗 READ SOURCE &rarr;</a>
       </div>
     </div>
   `).join('');
@@ -64,40 +67,40 @@ const generateEmailHtml = (data: any) => {
     <head>
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Hajimi Daily</title>
+      <title>Hajimi Morning Report</title>
     </head>
-    <body style="margin: 0; padding: 0; background-color: #f4f4f4; -webkit-font-smoothing: antialiased;">
+    <body style="margin: 0; padding: 0; background-color: #f0f0f0; -webkit-font-smoothing: antialiased;">
+      <center>
       <div style="${EMAIL_STYLES.container}">
         <div style="${EMAIL_STYLES.header}">
-          <h1 style="${EMAIL_STYLES.headerTitle}">Hajimi Daily</h1>
+          <h1 style="${EMAIL_STYLES.headerTitle}">📝 HAJIMI REPORT</h1>
           <div style="${EMAIL_STYLES.headerMeta}">
-             ISSUE: ${new Date().toLocaleDateString('en-GB').toUpperCase()} <span style="float:right">DIGITAL EDITION</span>
+             📅 ${new Date().toLocaleDateString('zh-CN')} | DIGITAL EDITION
           </div>
         </div>
         
-        <div style="padding: 0 16px;">
-             <div style="${EMAIL_STYLES.sectionTitle}">CURRENT EVENTS // 10 ITEMS</div>
+        <div style="${EMAIL_STYLES.sectionContainer}">
+             <div style="${EMAIL_STYLES.sectionTitle}">🔥 TRENDS & CULTURE</div>
+             ${data.social && data.social.length > 0 ? renderItems(data.social) : '<p>暂无内容</p>'}
         </div>
-        ${data.social && data.social.length > 0 ? renderItems(data.social) : '<p style="padding:16px;">暂无内容</p>'}
         
-        <div style="padding: 0 16px;">
-             <div style="${EMAIL_STYLES.sectionTitle}">HEALTH & HYGIENE // 10 ITEMS</div>
+        <div style="${EMAIL_STYLES.sectionContainer}">
+             <div style="${EMAIL_STYLES.sectionTitle}">🧬 HEALTH & SCIENCE</div>
+             ${data.health && data.health.length > 0 ? renderItems(data.health) : '<p>暂无内容</p>'}
         </div>
-        ${data.health && data.health.length > 0 ? renderItems(data.health) : '<p style="padding:16px;">暂无内容</p>'}
         
         <div style="${EMAIL_STYLES.footer}">
-          GENERATED BY 哈基米 AUTOMATION<br/>
-          <span style="opacity: 0.6">To unsubscribe, please reply to this email.</span>
+          GENERATED BY 哈基米 AUTOMATION
         </div>
       </div>
+      </center>
     </body>
     </html>
   `;
 };
 
-// 新增辅助函数：生成纯文本字符串
 const generateEmailText = (data: any) => {
-  let text = `HAJIMI DAILY - DIGITAL EDITION\nISSUE: ${new Date().toLocaleDateString('zh-CN')}\n\n`;
+  let text = `HAJIMI MORNING REPORT\nDATE: ${new Date().toLocaleDateString('zh-CN')}\n\n`;
 
   const processSection = (title: string, items: any[]) => {
     text += `=== ${title} ===\n\n`;
@@ -106,17 +109,15 @@ const generateEmailText = (data: any) => {
       return;
     }
     items.forEach((item, index) => {
-      text += `${index + 1}. ${item.title} [AI Score: ${item.ai_score}]\n`;
-      text += `TAGS: ${(item.tags || []).join(', ')}\n`;
+      text += `${index + 1}. ${item.title} [Score: ${item.ai_score}]\n`;
       text += `摘要(CN): ${item.summary_cn}\n`;
       text += `Summary(EN): ${item.summary_en}\n`;
-      text += `来源: ${item.source_name}\n`;
-      text += `链接: ${item.source_url}\n\n`;
+      text += `LINK: ${item.source_url}\n\n`;
     });
   };
 
-  processSection("CURRENT EVENTS", data.social);
-  processSection("HEALTH & HYGIENE", data.health);
+  processSection("TRENDS", data.social);
+  processSection("HEALTH", data.health);
   
   text += "\n----------------\nGENERATED BY 哈基米 AUTOMATION\n";
   return text;
@@ -125,71 +126,39 @@ const generateEmailText = (data: any) => {
 export async function POST(request: Request) {
   try {
     const resendApiKey = process.env.RESEND_API_KEY;
-    
-    if (!resendApiKey) {
-        console.error("Missing RESEND_API_KEY environment variable");
-        return NextResponse.json({ error: 'Server configuration error: Missing Mailer API Key' }, { status: 500 });
-    }
-
+    if (!resendApiKey) return NextResponse.json({ error: 'Missing Mailer API Key' }, { status: 500 });
     const resend = new Resend(resendApiKey);
 
     const body = await request.json();
     const { recipients, digestData } = body;
 
-    if (!recipients || !Array.isArray(recipients) || recipients.length === 0 || !digestData) {
-      return NextResponse.json({ error: 'Missing recipients list or data' }, { status: 400 });
-    }
+    if (!recipients || !digestData) return NextResponse.json({ error: 'Missing data' }, { status: 400 });
 
     const htmlContent = generateEmailHtml(digestData);
     const textContent = generateEmailText(digestData);
-    const subjectLine = `Hajimi Daily #${new Date().toISOString().split('T')[0]}`;
+    const subjectLine = `Hajimi Report #${new Date().toISOString().split('T')[0]}`;
+
+    console.log(`Sending to ${recipients.length} recipients...`);
 
     const results = [];
-    
-    console.log(`Starting to send emails to ${recipients.length} recipients...`);
-
     for (const recipientEmail of recipients) {
         try {
             const { data, error } = await resend.emails.send({
-                from: 'Daily Pulse <digest@misaki1.de5.net>', 
+                from: 'Hajimi <digest@misaki1.de5.net>', 
                 to: [recipientEmail], 
                 subject: subjectLine,
                 html: htmlContent,
                 text: textContent,
-                headers: {
-                    'X-Entity-Ref-ID': generateId(), // 使用自定义生成器
-                }
+                headers: { 'X-Entity-Ref-ID': generateId() }
             });
-            
-            if (error) {
-                console.error(`Failed to send to ${recipientEmail}:`, error);
-                results.push({ email: recipientEmail, status: 'failed', error });
-            } else {
-                results.push({ email: recipientEmail, status: 'success', id: data?.id });
-            }
+            results.push({ email: recipientEmail, status: error ? 'failed' : 'success', id: data?.id, error });
         } catch (e: any) {
-            console.error(`Exception sending to ${recipientEmail}:`, e);
             results.push({ email: recipientEmail, status: 'error', message: e.message });
         }
-
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 500));
     }
-    
-    const successCount = results.filter(r => r.status === 'success').length;
-    const failCount = results.length - successCount;
-
-    if (successCount === 0 && failCount > 0) {
-         return NextResponse.json({ error: 'All emails failed to send', details: results }, { status: 500 });
-    }
-
-    return NextResponse.json({ 
-        success: true, 
-        message: `Sent ${successCount} emails, ${failCount} failed.`,
-        details: results 
-    });
-
+    return NextResponse.json({ success: true, details: results });
   } catch (error: any) {
-    console.error('Email dispatch error:', error);
-    return NextResponse.json({ error: error.message || 'Internal Server Error' }, { status: 500 });
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

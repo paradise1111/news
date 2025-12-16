@@ -1,7 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { DigestData, DigestItem, LogEntry, AppStatus } from '../types';
-import { MOCK_EMAIL_STYLES } from '../constants';
 
 interface PipelineViewProps {
   status: AppStatus;
@@ -11,12 +10,47 @@ interface PipelineViewProps {
   onReset: () => void;
 }
 
+// HAND-DRAWN / SKETCH STYLE CSS CONSTANTS
+const SKETCH_STYLES = {
+  // Global Container
+  container: "max-width: 640px; margin: 0 auto; background-color: #fdfbf7; color: #333333; font-family: 'Comic Sans MS', 'Chalkboard SE', sans-serif; padding: 20px;",
+  
+  // Header
+  header: "text-align: center; margin-bottom: 30px; border-bottom: 2px dashed #bbb; padding-bottom: 20px;",
+  headerTitle: "font-size: 32px; font-weight: bold; margin: 0; color: #4a4a4a; text-transform: uppercase; letter-spacing: 2px;",
+  headerMeta: "font-family: monospace; color: #888; font-size: 14px; margin-top: 5px;",
+  
+  // Section Headers
+  sectionContainer: "margin-bottom: 30px;",
+  sectionTitle: "background-color: #333; color: #fff; padding: 8px 15px; font-size: 18px; font-weight: bold; display: inline-block; transform: rotate(-1deg); box-shadow: 3px 3px 0px rgba(0,0,0,0.2); margin-bottom: 15px; border-radius: 4px;",
+  
+  // Cards
+  card: "background-color: #ffffff; border: 2px solid #333; border-radius: 8px; padding: 15px; margin-bottom: 15px; box-shadow: 4px 4px 0px #e0e0e0; position: relative;",
+  
+  // Card Content
+  cardHeader: "display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;",
+  cardTitle: "font-size: 18px; font-weight: bold; line-height: 1.3; margin: 0; flex: 1; color: #000;",
+  scoreBadge: "background-color: #ffeb3b; border: 2px solid #333; font-weight: bold; font-family: monospace; padding: 2px 6px; font-size: 12px; border-radius: 4px; margin-left: 10px; box-shadow: 2px 2px 0px rgba(0,0,0,0.1);",
+  
+  tags: "margin-bottom: 10px; font-size: 12px; font-family: monospace;",
+  tag: "background-color: #e0f7fa; padding: 2px 6px; border-radius: 4px; margin-right: 5px; border: 1px solid #b2ebf2; display: inline-block;",
+  
+  // Summary
+  summary: "font-family: 'Verdana', sans-serif; font-size: 14px; line-height: 1.6; color: #444; margin-bottom: 12px;",
+  summaryCn: "margin-bottom: 8px; font-weight: 500;",
+  summaryEn: "color: #777; font-size: 0.9em; font-style: italic;",
+  
+  // Link
+  link: "display: inline-block; background-color: #333; color: #fff; text-decoration: none; padding: 6px 12px; font-size: 12px; font-weight: bold; border-radius: 4px; transition: opacity 0.2s;",
+  
+  footer: "text-align: center; font-size: 12px; color: #aaa; margin-top: 40px; border-top: 1px solid #ddd; padding-top: 20px; font-family: monospace;"
+};
+
 const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigger, onReset }) => {
   const [activeTab, setActiveTab] = useState<'preview' | 'html'>('preview');
   const [emailInput, setEmailInput] = useState('');
   const [showInfo, setShowInfo] = useState(false);
 
-  // Auto-scroll logs
   const logsEndRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -24,23 +58,24 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
 
   const generateHtml = (data: DigestData) => {
     const renderItems = (items: DigestItem[]) => items.map(item => `
-      <div style="${MOCK_EMAIL_STYLES.card}">
-        <div style="${MOCK_EMAIL_STYLES.cardHeaderRow}">
-           <div style="${MOCK_EMAIL_STYLES.cardTitle}">${item.title}</div>
-           <div style="${MOCK_EMAIL_STYLES.scoreBadge}" title="AI Analysis Score">${item.ai_score || '-'}</div>
+      <div style="${SKETCH_STYLES.card}">
+        <div style="${SKETCH_STYLES.cardHeader}">
+           <div style="${SKETCH_STYLES.cardTitle}">${item.title}</div>
+           <div style="${SKETCH_STYLES.scoreBadge}">${item.ai_score}</div>
         </div>
         
-        <div style="${MOCK_EMAIL_STYLES.tagsRow}">
-          ${(item.tags || []).map(tag => `<span style="${MOCK_EMAIL_STYLES.tag}">${tag}</span>`).join('')}
-          <span style="opacity:0.5">SOURCE: ${item.source_name}</span>
+        <div style="${SKETCH_STYLES.tags}">
+          ${(item.tags || []).map(tag => `<span style="${SKETCH_STYLES.tag}">${tag}</span>`).join('')}
+          <span style="color:#999; margin-left:5px;">@${item.source_name}</span>
         </div>
 
-        <div style="${MOCK_EMAIL_STYLES.summaryCn}">
-           <span style="display:block; margin-bottom: 4px;">🇨🇳 ${item.summary_cn}</span>
-           <span style="display:block; color: #555; font-size: 0.9em;">🇺🇸 ${item.summary_en}</span>
+        <div style="${SKETCH_STYLES.summary}">
+           <div style="${SKETCH_STYLES.summaryCn}">💡 ${item.summary_cn}</div>
+           <div style="${SKETCH_STYLES.summaryEn}">${item.summary_en}</div>
         </div>
-        <div style="margin-top: 8px;">
-          <a href="${item.source_url}" style="color: #000; text-decoration: underline; font-size: 11px; font-family: monospace;" target="_blank" rel="noopener noreferrer">READ FULL ARTICLE &rarr;</a>
+        
+        <div>
+          <a href="${item.source_url}" target="_blank" style="${SKETCH_STYLES.link}">🔗 READ SOURCE &rarr;</a>
         </div>
       </div>
     `).join('');
@@ -50,28 +85,33 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
       <html>
       <head>
         <meta charset="utf-8">
-        <base target="_blank">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <!-- Google Fonts for that 'Report' feel -->
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Patrick+Hand&family=ZCOOL+KuaiLe&display=swap" rel="stylesheet">
+        <title>Hajimi Morning Report</title>
       </head>
-      <body style="margin: 0; padding: 0; background-color: #f4f4f4;">
-        <div style="${MOCK_EMAIL_STYLES.container}">
-          <div style="${MOCK_EMAIL_STYLES.header}">
-            <h1 style="${MOCK_EMAIL_STYLES.headerTitle}">Hajimi Daily</h1>
-            <div style="${MOCK_EMAIL_STYLES.headerMeta}">
-               ISSUE: ${new Date().toLocaleDateString('en-GB').toUpperCase()} <span style="float:right">DIGITAL EDITION</span>
+      <body style="margin: 0; padding: 0; background-color: #eef2f5;">
+        <div style="${SKETCH_STYLES.container}">
+          <div style="${SKETCH_STYLES.header}">
+            <h1 style="${SKETCH_STYLES.headerTitle}">📝 HAJIMI MORNING REPORT</h1>
+            <div style="${SKETCH_STYLES.headerMeta}">
+               📅 ${new Date().toLocaleDateString('zh-CN')} | 🤖 AI GENERATED
             </div>
           </div>
           
-          <div style="padding: 0 16px;">
-             <div style="${MOCK_EMAIL_STYLES.sectionTitle}">CURRENT EVENTS // 10 ITEMS</div>
+          <div style="${SKETCH_STYLES.sectionContainer}">
+             <div style="${SKETCH_STYLES.sectionTitle}">🔥 TRENDS & CULTURE</div>
+             ${renderItems(data.social)}
           </div>
-          ${renderItems(data.social)}
           
-          <div style="padding: 0 16px;">
-             <div style="${MOCK_EMAIL_STYLES.sectionTitle}">HEALTH & HYGIENE // 10 ITEMS</div>
+          <div style="${SKETCH_STYLES.sectionContainer}">
+             <div style="${SKETCH_STYLES.sectionTitle} background-color: #27ae60;">🧬 HEALTH & SCIENCE</div>
+             ${renderItems(data.health)}
           </div>
-          ${renderItems(data.health)}
           
-          <div style="${MOCK_EMAIL_STYLES.footer}">
+          <div style="${SKETCH_STYLES.footer}">
             GENERATED BY 哈基米 AUTOMATION
           </div>
         </div>
@@ -82,16 +122,12 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
 
   const handleDownloadLogs = () => {
     if (logs.length === 0) return;
-    
-    // Generate text content
     const content = logs.map(l => `[${l.timestamp}] [${l.type.toUpperCase()}] ${l.message}`).join('\n');
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    
-    // Create download link
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `daily-pulse-logs-${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.log`;
+    a.download = `hajimi-logs-${new Date().toISOString().slice(0,10)}.log`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -102,259 +138,63 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
   const isComplete = status === AppStatus.COMPLETE && data;
 
   const handleRun = () => {
-    if (!emailInput) {
-      alert("请输入接收邮箱");
-      return;
-    }
-
-    // 解析输入的邮箱，支持逗号、分号、空格或换行分隔
-    const recipients = emailInput
-      .split(/[,;\s\n]+/)
-      .map(e => e.trim())
-      .filter(e => e.length > 0);
-
-    if (recipients.length === 0) {
-      alert("请输入有效的邮箱地址");
-      return;
-    }
-
+    if (!emailInput) { alert("请输入接收邮箱"); return; }
+    const recipients = emailInput.split(/[,;\s\n]+/).map(e => e.trim()).filter(e => e.length > 0);
+    if (recipients.length === 0) { alert("请输入有效的邮箱地址"); return; }
     onTrigger(recipients);
   };
 
   return (
     <div className="flex flex-col h-full gap-6 relative">
-      
       {/* Control Bar */}
       <div className="flex items-center justify-between bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex-wrap gap-4 z-10">
         <div className="flex items-center gap-4">
           <div className={`h-3 w-3 rounded-full ${isProcessing ? 'bg-yellow-400 animate-pulse' : isComplete ? 'bg-green-500' : 'bg-gray-300'}`} />
-          <span className="font-medium text-gray-700">
-            {isProcessing ? '任务运行中...' : isComplete ? '日报已生成' : '准备就绪'}
-          </span>
+          <span className="font-medium text-gray-700">{isProcessing ? 'Working...' : isComplete ? 'Done' : 'Ready'}</span>
         </div>
-        
         <div className="flex gap-3 items-center ml-auto flex-wrap justify-end">
-          <button 
-             onClick={() => setShowInfo(true)}
-             className="text-gray-500 hover:text-indigo-600 transition-colors flex items-center gap-1 text-sm font-medium mr-2"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-            工作原理
-          </button>
-
-          <input 
-            type="text"
-            placeholder="输入邮箱 (多账号用逗号分隔)..."
-            value={emailInput}
-            onChange={(e) => setEmailInput(e.target.value)}
-            className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none w-64"
-            disabled={isProcessing}
-          />
-
-          <button 
-            onClick={onReset}
-            className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors text-sm font-medium whitespace-nowrap"
-          >
-            返回配置
-          </button>
-          
-          <button 
-            onClick={handleRun}
-            disabled={isProcessing || !emailInput}
-            className={`px-6 py-2 rounded-lg text-white font-semibold shadow-md transition-all flex items-center gap-2 whitespace-nowrap
-              ${(isProcessing || !emailInput)
-                ? 'bg-gray-400 cursor-not-allowed' 
-                : 'bg-indigo-600 hover:bg-indigo-700 active:scale-95'}`}
-          >
-             {isProcessing ? (
-               <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-               </svg>
-             ) : (
-               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
-             )}
-             {isComplete ? '重新发送' : '开始运行'}
+          <button onClick={() => setShowInfo(true)} className="text-gray-500 hover:text-indigo-600 transition-colors text-sm font-medium mr-2">Using Gemini 2.5</button>
+          <input type="text" placeholder="Email list..." value={emailInput} onChange={(e) => setEmailInput(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm w-64 focus:outline-none focus:border-indigo-500" disabled={isProcessing} />
+          <button onClick={onReset} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg text-sm">Config</button>
+          <button onClick={handleRun} disabled={isProcessing || !emailInput} className={`px-6 py-2 rounded-lg text-white font-semibold shadow-md ${isProcessing || !emailInput ? 'bg-gray-400' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+             {isProcessing ? 'Running...' : isComplete ? 'Resend' : 'Start'}
           </button>
         </div>
       </div>
 
       <div className="flex flex-col lg:flex-row gap-6 flex-1 min-h-0">
-        
-        {/* Logs Console */}
+        {/* Logs */}
         <div className="lg:w-1/3 bg-gray-900 rounded-xl overflow-hidden flex flex-col shadow-lg border border-gray-800">
-          <div className="bg-gray-800 px-4 py-2 flex items-center justify-between">
-            <span className="text-gray-400 text-xs font-mono">系统日志</span>
-            <div className="flex items-center gap-3">
-              <button 
-                onClick={handleDownloadLogs}
-                title="下载日志文件"
-                className="text-gray-400 hover:text-white transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-              </button>
-              <div className="flex gap-1.5">
-                <div className="w-2.5 h-2.5 rounded-full bg-red-500/50"></div>
-                <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/50"></div>
-                <div className="w-2.5 h-2.5 rounded-full bg-green-500/50"></div>
-              </div>
-            </div>
-          </div>
+          <div className="bg-gray-800 px-4 py-2 flex justify-between"><span className="text-gray-400 text-xs">TERMINAL</span><button onClick={handleDownloadLogs} className="text-gray-400 hover:text-white">⬇</button></div>
           <div className="flex-1 p-4 font-mono text-xs overflow-y-auto space-y-2 text-gray-300">
-            {logs.length === 0 && <span className="text-gray-600 italic">等待触发...</span>}
-            {logs.map((log, idx) => (
-              <div key={idx} className="flex gap-2">
-                <span className="text-gray-500 shrink-0">[{log.timestamp}]</span>
-                <span className={`break-words ${
-                  log.type === 'error' ? 'text-red-400' : 
-                  log.type === 'success' ? 'text-green-400' : 'text-blue-300'
-                }`}>
-                  {log.message}
-                </span>
-              </div>
-            ))}
+            {logs.map((log, idx) => <div key={idx} className={log.type === 'error' ? 'text-red-400' : log.type === 'success' ? 'text-green-400' : 'text-blue-300'}>[{log.timestamp}] {log.message}</div>)}
             <div ref={logsEndRef} />
           </div>
         </div>
 
-        {/* Preview Area */}
+        {/* Preview */}
         <div className="lg:w-2/3 bg-white rounded-xl shadow-lg border border-gray-100 flex flex-col overflow-hidden">
           {data ? (
             <>
               <div className="border-b border-gray-200 flex">
-                <button 
-                  onClick={() => setActiveTab('preview')}
-                  className={`px-6 py-3 text-sm font-medium transition-colors ${activeTab === 'preview' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  邮件预览
-                </button>
-                <button 
-                  onClick={() => setActiveTab('html')}
-                  className={`px-6 py-3 text-sm font-medium transition-colors ${activeTab === 'html' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
-                >
-                  HTML 源码
-                </button>
+                <button onClick={() => setActiveTab('preview')} className={`px-6 py-3 text-sm font-medium ${activeTab === 'preview' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-500'}`}>Visual Preview</button>
+                <button onClick={() => setActiveTab('html')} className={`px-6 py-3 text-sm font-medium ${activeTab === 'html' ? 'text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-500'}`}>Source Code</button>
               </div>
-              
-              <div className="flex-1 overflow-y-auto bg-gray-50 p-4">
+              <div className="flex-1 overflow-y-auto bg-[#eef2f5] p-4">
                 {activeTab === 'preview' ? (
-                  <div className="max-w-[600px] mx-auto bg-white shadow-sm min-h-[500px]">
-                    <iframe 
-                      title="Preview"
-                      srcDoc={generateHtml(data)}
-                      className="w-full h-[600px] border-none"
-                      sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts"
-                    />
+                  <div className="max-w-[640px] mx-auto bg-white shadow-xl min-h-[600px]">
+                    <iframe title="Preview" srcDoc={generateHtml(data)} className="w-full h-[800px] border-none" sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts" />
                   </div>
                 ) : (
-                  <div className="h-full relative">
-                     <textarea 
-                        readOnly
-                        className="w-full h-full p-4 font-mono text-xs bg-gray-50 text-gray-700 border rounded resize-none focus:outline-none"
-                        value={generateHtml(data)}
-                      />
-                      <button 
-                        onClick={() => {navigator.clipboard.writeText(generateHtml(data)); alert('已复制到剪贴板!');}}
-                        className="absolute top-4 right-4 bg-gray-800 text-white px-3 py-1 rounded text-xs hover:bg-gray-700"
-                      >
-                        复制代码
-                      </button>
-                  </div>
+                  <textarea readOnly className="w-full h-full p-4 font-mono text-xs bg-gray-50" value={generateHtml(data)} />
                 )}
               </div>
             </>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-gray-400 p-8 text-center">
-              <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
-                <svg className="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                </svg>
-              </div>
-              <p className="font-medium">暂无日报数据</p>
-              <p className="text-sm mt-1">请输入邮箱列表并点击“开始运行”</p>
-            </div>
+            <div className="flex-1 flex flex-col items-center justify-center text-gray-400"><p>Waiting for data...</p></div>
           )}
         </div>
       </div>
-
-      {/* How it Works Modal */}
-      {showInfo && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-fadeIn" onClick={() => setShowInfo(false)}>
-          <div className="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-gray-50/50 sticky top-0 backdrop-blur-md">
-              <h3 className="text-xl font-bold text-gray-800 flex items-center gap-2">
-                <span className="text-2xl">⚡</span> Daily Pulse 核心机制
-              </h3>
-              <button onClick={() => setShowInfo(false)} className="text-gray-400 hover:text-gray-600 p-2 rounded-full hover:bg-gray-100">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-              </button>
-            </div>
-            
-            <div className="p-6 space-y-6">
-              
-              <section>
-                <h4 className="flex items-center gap-2 text-indigo-600 font-bold mb-3">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" /></svg>
-                  1. 消息来源与获取方式
-                </h4>
-                <div className="bg-indigo-50 rounded-lg p-4 text-sm text-gray-700 space-y-2 border border-indigo-100">
-                  <p>
-                    <span className="font-semibold text-indigo-900">数据源 (Sources):</span> 本系统并不预置新闻数据库，而是利用 Gemini 2.5 模型的 <strong>联网搜索能力 (Google Search Grounding)</strong> 实时从公开互联网获取数据。
-                  </p>
-                  <p>
-                    <span className="font-semibold text-indigo-900">覆盖范围 (Scope):</span> 自动扫描全球主流新闻媒体 (如 BBC, CNN, TechCrunch)、社交媒体趋势榜 (如 X/Twitter Trends) 以及权威科研期刊 (Nature, ScienceDaily)。
-                  </p>
-                  <p>
-                    <span className="font-semibold text-indigo-900">获取策略 (Strategy):</span> 系统会自动计算当前日期的“昨天”，构建高精度的搜索查询（例如 <em>"trending social news {new Date(Date.now()-86400000).toISOString().split('T')[0]}"</em>），确保资讯的时效性。
-                  </p>
-                </div>
-              </section>
-
-              <section>
-                <h4 className="flex items-center gap-2 text-purple-600 font-bold mb-3">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
-                  2. AI 分析全流程 (升级版)
-                </h4>
-                <ul className="space-y-4">
-                  <li className="flex gap-3">
-                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center font-bold text-sm">A</div>
-                    <div>
-                      <h5 className="font-semibold text-gray-800 text-sm">意图识别与搜索 (Search Intent)</h5>
-                      <p className="text-xs text-gray-500 mt-1">Agent 接收任务指令，将“寻找昨日热点”拆解为具体的搜索引擎查询语句。强制要求多信源验证。</p>
-                    </div>
-                  </li>
-                  <li className="flex gap-3">
-                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center font-bold text-sm">B</div>
-                    <div>
-                      <h5 className="font-semibold text-gray-800 text-sm">多维 AI 打分 (Scoring System)</h5>
-                      <p className="text-xs text-gray-500 mt-1">引入评分模型：<br/>- <strong>新奇度 (Novelty)</strong><br/>- <strong>趣味性 (Fun)</strong><br/>- <strong>易爆性 (Virality)</strong><br/>- <strong>热度 (Heat)</strong><br/>系统自动筛选 Top 10 高分内容。</p>
-                    </div>
-                  </li>
-                  <li className="flex gap-3">
-                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center font-bold text-sm">C</div>
-                    <div>
-                      <h5 className="font-semibold text-gray-800 text-sm">标签提取与翻译 (Tagging & Translation)</h5>
-                      <p className="text-xs text-gray-500 mt-1">生成"🔥 Viral", "🧠 Deep" 等强力标签，并提供专业中文摘要。</p>
-                    </div>
-                  </li>
-                  <li className="flex gap-3">
-                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center font-bold text-sm">D</div>
-                    <div>
-                      <h5 className="font-semibold text-gray-800 text-sm">数字印刷排版 (Digital Print Design)</h5>
-                      <p className="text-xs text-gray-500 mt-1">最终输出为高饱和度、紧凑布局的 Brutalist 风格邮件。</p>
-                    </div>
-                  </li>
-                </ul>
-              </section>
-
-              <div className="border-t border-gray-100 pt-4 text-xs text-gray-400">
-                免责声明：本内容由人工智能自动生成，可能包含错误或幻觉。所有资讯均附带原始来源链接，重要决策前请务必点击链接查证。
-              </div>
-
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 };
