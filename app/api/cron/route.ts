@@ -7,22 +7,23 @@ export const dynamic = 'force-dynamic';
 
 const generateId = () => Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
-// SKETCH STYLE (Sync with digest/route.ts)
+// MOBILE-FRIENDLY SKETCH STYLE (Sync with digest/route.ts)
 const EMAIL_STYLES = {
-  container: "font-family: 'Verdana', 'Helvetica', sans-serif; max-width: 620px; margin: 0 auto; background-color: #fdfbf7; color: #333333; padding: 20px; border: 1px solid #e0e0e0;",
+  container: "font-family: 'Verdana', 'Microsoft YaHei', sans-serif; width: 100%; max-width: 600px; margin: 0 auto; background-color: #fdfbf7; color: #333333; padding: 15px; border: 1px solid #e0e0e0; box-sizing: border-box;",
   header: "text-align: center; margin-bottom: 30px; border-bottom: 2px dashed #999; padding-bottom: 20px;",
-  headerTitle: "font-size: 28px; font-weight: bold; margin: 0; color: #333; text-transform: uppercase; letter-spacing: 2px;",
-  headerMeta: "font-family: monospace; color: #666; font-size: 14px; margin-top: 5px;",
+  headerTitle: "font-size: 26px; font-weight: bold; margin: 0; color: #333; text-transform: uppercase; letter-spacing: 1px;",
+  headerMeta: "font-family: monospace; color: #666; font-size: 13px; margin-top: 5px;",
   sectionContainer: "margin-bottom: 40px;",
-  sectionTitle: "background-color: #333; color: #fff; padding: 6px 12px; font-size: 16px; font-weight: bold; display: inline-block; margin-bottom: 15px; border-radius: 4px; letter-spacing: 1px;",
+  sectionTitle: "background-color: #333; color: #fff; padding: 6px 12px; font-size: 16px; font-weight: bold; display: inline-block; margin-bottom: 15px; border-radius: 4px; letter-spacing: 1px; max-width: 90%;",
   card: "background-color: #ffffff; border: 2px solid #444; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 4px 4px 0px #ddd;",
-  cardHeader: "margin-bottom: 10px;",
-  cardTitle: "font-size: 18px; font-weight: bold; line-height: 1.3; color: #000; margin: 0; margin-bottom: 4px;",
+  cardHeader: "margin-bottom: 10px; overflow: hidden;",
+  cardTitle: "font-size: 18px; font-weight: bold; line-height: 1.3; color: #000; margin: 0; margin-bottom: 8px;",
+  scoreBox: "display: inline-block; background-color: #ffeb3b; border: 1px solid #333; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-family: monospace; margin-bottom: 8px;",
   tags: "margin-bottom: 10px; font-size: 12px; font-family: monospace;",
-  tag: "background-color: #eee; padding: 2px 6px; border-radius: 4px; margin-right: 5px; border: 1px solid #ccc; color: #555;",
+  tag: "display: inline-block; background-color: #eee; padding: 2px 6px; border-radius: 4px; margin-right: 4px; margin-bottom: 4px; border: 1px solid #ccc; color: #555;",
   summaryCn: "font-size: 15px; line-height: 1.6; color: #222; margin-bottom: 6px; font-weight: 500;",
   summaryEn: "color: #777; font-size: 13px; font-style: italic; margin-bottom: 12px;",
-  linkBtn: "display: inline-block; background-color: #333; color: #ffffff !important; text-decoration: none; padding: 8px 12px; font-size: 12px; font-weight: bold; border-radius: 4px;",
+  linkBtn: "display: inline-block; background-color: #333; color: #ffffff !important; text-decoration: none; padding: 10px 14px; font-size: 12px; font-weight: bold; border-radius: 4px; margin-top: 5px;",
   footer: "text-align: center; font-size: 12px; color: #aaa; margin-top: 40px; border-top: 1px solid #ddd; padding-top: 20px; font-family: monospace;"
 };
 
@@ -31,15 +32,17 @@ const generateEmailHtml = (data: any) => {
     <div style="${EMAIL_STYLES.card}">
       <div style="${EMAIL_STYLES.cardHeader}">
          <div style="${EMAIL_STYLES.cardTitle}">${item.title}</div>
+         <div style="${EMAIL_STYLES.scoreBox}">
+            <b>${item.ai_score}</b> <span style="border-left:1px solid #000; margin-left:4px; padding-left:4px;">${item.ai_score_reason || 'Score'}</span>
+         </div>
       </div>
       <div style="${EMAIL_STYLES.tags}">
-        <span style="float:right; color:#888;">Score: ${item.ai_score}</span>
         ${(item.tags || []).map((tag: string) => `<span style="${EMAIL_STYLES.tag}">${tag}</span>`).join('')}
       </div>
       <div style="${EMAIL_STYLES.summaryCn}">💡 ${item.summary_cn}</div>
       <div style="${EMAIL_STYLES.summaryEn}">${item.summary_en}</div>
-      <div style="margin-top: 10px;">
-        <a href="${item.source_url}" target="_blank" style="${EMAIL_STYLES.linkBtn}">🔗 READ SOURCE &rarr;</a>
+      <div>
+        <a href="${item.source_url}" target="_blank" style="${EMAIL_STYLES.linkBtn}">🔗 READ SOURCE</a>
       </div>
     </div>
   `).join('');
@@ -50,6 +53,9 @@ const generateEmailHtml = (data: any) => {
     <head><meta charset="utf-8"><title>Hajimi Morning Report</title></head>
     <body style="margin: 0; padding: 0; background-color: #f0f0f0;">
       <center>
+      <!--[if mso]>
+      <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" align="center"><tr><td>
+      <![endif]-->
       <div style="${EMAIL_STYLES.container}">
         <div style="${EMAIL_STYLES.header}">
           <h1 style="${EMAIL_STYLES.headerTitle}">📝 HAJIMI REPORT</h1>
@@ -67,6 +73,9 @@ const generateEmailHtml = (data: any) => {
         </div>
         <div style="${EMAIL_STYLES.footer}">GENERATED BY 哈基米 AUTOMATION</div>
       </div>
+      <!--[if mso]>
+      </td></tr></table>
+      <![endif]-->
       </center>
     </body></html>
   `;
@@ -77,7 +86,7 @@ const generateEmailText = (data: any) => {
   const processSection = (title: string, items: any[]) => {
     text += `=== ${title} ===\n\n`;
     items.forEach((item, index) => {
-      text += `${index + 1}. ${item.title} [Score: ${item.ai_score}]\n摘要(CN): ${item.summary_cn}\nSummary(EN): ${item.summary_en}\nLINK: ${item.source_url}\n\n`;
+      text += `${index + 1}. ${item.title} [${item.ai_score}: ${item.ai_score_reason || 'N/A'}]\n摘要(CN): ${item.summary_cn}\nSummary(EN): ${item.summary_en}\nLINK: ${item.source_url}\n\n`;
     });
   };
   processSection("TRENDS", data.social || []);
@@ -116,7 +125,8 @@ export async function GET(request: Request) {
       You are the Hajimi Daily Editor. Today is ${today.toISOString().split('T')[0]}.
       Find 20 items from ${targetDateStr}. 10 Social/Trends, 10 Health.
       CRITICAL: LINKS MUST BE VALID. BILINGUAL SUMMARIES.
-      Output JSON: { "social": [...], "health": [...] }
+      SCORING REASON: Brief 4-word reason for score.
+      Output JSON: { "social": [{"title":..., "ai_score":..., "ai_score_reason":"...", ...}], "health": [...] }
     `;
 
     // AI Call
@@ -137,7 +147,6 @@ export async function GET(request: Request) {
             body: JSON.stringify(payload)
         });
         if (!res.ok) {
-             // Fallback retry without tools logic implied here for brevity, assuming main service logic handles robust cases better
              const txt = await res.text();
              console.error("Cron AI Error:", txt);
              throw new Error(txt);

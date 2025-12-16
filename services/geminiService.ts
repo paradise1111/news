@@ -245,7 +245,7 @@ export const generateDailyDigest = async (
 
   onLog(`设定目标日期: ${queryDateStr}`);
 
-  // UPGRADED PROMPT: 10 + 10 Items, Bilingual, Hajimi Style
+  // UPGRADED PROMPT: 10 + 10 Items, Bilingual, Hajimi Style, Score Reason
   const prompt = `
     You are an automated Daily Information Digest agent.
     
@@ -255,10 +255,11 @@ export const generateDailyDigest = async (
     
     ### CRITICAL INSTRUCTIONS
     1. **VOLUME**: You must find EXACTLY 20 ITEMS in total.
-    2. **DIVERSITY**: Consult multiple sources. Do not rely on a single domain.
-    3. **LINKS**: **EXTREMELY IMPORTANT**: You MUST provide a valid, clickable 'source_url' for every item. Do not hallucinate links. Verify them via search.
+    2. **DIVERSITY**: Consult multiple sources.
+    3. **LINKS**: **EXTREMELY IMPORTANT**: You MUST provide a valid, clickable 'source_url' for every item. Verify them via search.
     4. **BILINGUAL**: The summary MUST include both English and Chinese versions in the JSON.
     5. **SCORING**: Rate items (0-100) based on Novelty, Fun, Virality, and Heat.
+    6. **SCORE REASON**: You MUST provide a short string (max 6 words) explaining WHY you gave this score (e.g. "High viral potential", "Major breakthrough").
     
     ### Task 1: Current Events (The "World")
     - **Scope**: Economy, Politics, Culture, and Global Affairs.
@@ -286,6 +287,7 @@ export const generateDailyDigest = async (
           "source_url": "...", 
           "source_name": "...", 
           "ai_score": 95, 
+          "ai_score_reason": "Global impact", 
           "tags": ["Tag1", "Tag2"] 
         }
       ],

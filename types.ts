@@ -6,6 +6,7 @@ export interface DigestItem {
   source_url: string;
   source_name: string;
   ai_score: number; // 0-100 Score based on Novelty, Fun, Virality, Heat
+  ai_score_reason: string; // Brief explanation for the score
   tags: string[];   // e.g. ["🔥 Viral", "🧠 Deep"]
 }
 

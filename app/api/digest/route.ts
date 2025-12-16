@@ -8,34 +8,38 @@ export const dynamic = 'force-dynamic';
 
 const generateId = () => Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
-// SKETCH / REPORT STYLE FOR EMAIL CLIENTS (INLINE CSS)
+// MOBILE-FRIENDLY SKETCH STYLE (INLINE CSS)
 const EMAIL_STYLES = {
-  // Global Container - Beige Paper Look
-  container: "font-family: 'Verdana', 'Helvetica', sans-serif; max-width: 620px; margin: 0 auto; background-color: #fdfbf7; color: #333333; padding: 20px; border: 1px solid #e0e0e0;",
+  // Global Container: Use width: 100% and max-width for responsiveness
+  container: "font-family: 'Verdana', 'Microsoft YaHei', sans-serif; width: 100%; max-width: 600px; margin: 0 auto; background-color: #fdfbf7; color: #333333; padding: 15px; border: 1px solid #e0e0e0; box-sizing: border-box;",
   
   // Header
   header: "text-align: center; margin-bottom: 30px; border-bottom: 2px dashed #999; padding-bottom: 20px;",
-  headerTitle: "font-size: 28px; font-weight: bold; margin: 0; color: #333; text-transform: uppercase; letter-spacing: 2px;",
-  headerMeta: "font-family: monospace; color: #666; font-size: 14px; margin-top: 5px;",
+  headerTitle: "font-size: 26px; font-weight: bold; margin: 0; color: #333; text-transform: uppercase; letter-spacing: 1px;",
+  headerMeta: "font-family: monospace; color: #666; font-size: 13px; margin-top: 5px;",
   
-  // Section Headers - Highlight Marker Look
+  // Section Headers
   sectionContainer: "margin-bottom: 40px;",
-  sectionTitle: "background-color: #333; color: #fff; padding: 6px 12px; font-size: 16px; font-weight: bold; display: inline-block; margin-bottom: 15px; border-radius: 4px; letter-spacing: 1px;",
+  sectionTitle: "background-color: #333; color: #fff; padding: 6px 12px; font-size: 16px; font-weight: bold; display: inline-block; margin-bottom: 15px; border-radius: 4px; letter-spacing: 1px; max-width: 90%;",
   
-  // Cards - White Box on Beige
+  // Cards
   card: "background-color: #ffffff; border: 2px solid #444; border-radius: 8px; padding: 15px; margin-bottom: 20px; box-shadow: 4px 4px 0px #ddd;",
   
-  // Card Details
-  cardHeader: "margin-bottom: 10px;",
-  cardTitle: "font-size: 18px; font-weight: bold; line-height: 1.3; color: #000; margin: 0; margin-bottom: 4px;",
+  // Card Details - Using block layout with floats/inline-blocks for better email client support than flexbox
+  cardHeader: "margin-bottom: 10px; overflow: hidden;",
+  
+  cardTitle: "font-size: 18px; font-weight: bold; line-height: 1.3; color: #000; margin: 0; margin-bottom: 8px;",
+  
+  // Score Reason Box
+  scoreBox: "display: inline-block; background-color: #ffeb3b; border: 1px solid #333; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-family: monospace; margin-bottom: 8px;",
   
   tags: "margin-bottom: 10px; font-size: 12px; font-family: monospace;",
-  tag: "background-color: #eee; padding: 2px 6px; border-radius: 4px; margin-right: 5px; border: 1px solid #ccc; color: #555;",
+  tag: "display: inline-block; background-color: #eee; padding: 2px 6px; border-radius: 4px; margin-right: 4px; margin-bottom: 4px; border: 1px solid #ccc; color: #555;",
   
   summaryCn: "font-size: 15px; line-height: 1.6; color: #222; margin-bottom: 6px; font-weight: 500;",
   summaryEn: "color: #777; font-size: 13px; font-style: italic; margin-bottom: 12px;",
   
-  linkBtn: "display: inline-block; background-color: #333; color: #ffffff !important; text-decoration: none; padding: 8px 12px; font-size: 12px; font-weight: bold; border-radius: 4px;",
+  linkBtn: "display: inline-block; background-color: #333; color: #ffffff !important; text-decoration: none; padding: 10px 14px; font-size: 12px; font-weight: bold; border-radius: 4px; margin-top: 5px;",
   
   footer: "text-align: center; font-size: 12px; color: #aaa; margin-top: 40px; border-top: 1px solid #ddd; padding-top: 20px; font-family: monospace;"
 };
@@ -45,18 +49,20 @@ const generateEmailHtml = (data: any) => {
     <div style="${EMAIL_STYLES.card}">
       <div style="${EMAIL_STYLES.cardHeader}">
          <div style="${EMAIL_STYLES.cardTitle}">${item.title}</div>
+         <div style="${EMAIL_STYLES.scoreBox}">
+            <b>${item.ai_score}</b> <span style="border-left:1px solid #000; margin-left:4px; padding-left:4px;">${item.ai_score_reason || 'Score'}</span>
+         </div>
       </div>
       
       <div style="${EMAIL_STYLES.tags}">
-        <span style="float:right; color:#888;">Score: ${item.ai_score}</span>
         ${(item.tags || []).map((tag: string) => `<span style="${EMAIL_STYLES.tag}">${tag}</span>`).join('')}
       </div>
 
       <div style="${EMAIL_STYLES.summaryCn}">💡 ${item.summary_cn}</div>
       <div style="${EMAIL_STYLES.summaryEn}">${item.summary_en}</div>
       
-      <div style="margin-top: 10px;">
-        <a href="${item.source_url}" target="_blank" style="${EMAIL_STYLES.linkBtn}">🔗 READ SOURCE &rarr;</a>
+      <div>
+        <a href="${item.source_url}" target="_blank" style="${EMAIL_STYLES.linkBtn}">🔗 READ SOURCE</a>
       </div>
     </div>
   `).join('');
@@ -71,6 +77,12 @@ const generateEmailHtml = (data: any) => {
     </head>
     <body style="margin: 0; padding: 0; background-color: #f0f0f0; -webkit-font-smoothing: antialiased;">
       <center>
+      <!-- Outlook wrapper -->
+      <!--[if mso]>
+      <table role="presentation" width="600" cellspacing="0" cellpadding="0" border="0" align="center">
+      <tr>
+      <td>
+      <![endif]-->
       <div style="${EMAIL_STYLES.container}">
         <div style="${EMAIL_STYLES.header}">
           <h1 style="${EMAIL_STYLES.headerTitle}">📝 HAJIMI REPORT</h1>
@@ -93,6 +105,11 @@ const generateEmailHtml = (data: any) => {
           GENERATED BY 哈基米 AUTOMATION
         </div>
       </div>
+      <!--[if mso]>
+      </td>
+      </tr>
+      </table>
+      <![endif]-->
       </center>
     </body>
     </html>
@@ -109,7 +126,7 @@ const generateEmailText = (data: any) => {
       return;
     }
     items.forEach((item, index) => {
-      text += `${index + 1}. ${item.title} [Score: ${item.ai_score}]\n`;
+      text += `${index + 1}. ${item.title} [${item.ai_score}: ${item.ai_score_reason || 'N/A'}]\n`;
       text += `摘要(CN): ${item.summary_cn}\n`;
       text += `Summary(EN): ${item.summary_en}\n`;
       text += `LINK: ${item.source_url}\n\n`;

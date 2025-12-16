@@ -10,40 +10,44 @@ interface PipelineViewProps {
   onReset: () => void;
 }
 
-// HAND-DRAWN / SKETCH STYLE CSS CONSTANTS
+// HAND-DRAWN / SKETCH STYLE CSS CONSTANTS - MOBILE OPTIMIZED
 const SKETCH_STYLES = {
-  // Global Container
-  container: "max-width: 640px; margin: 0 auto; background-color: #fdfbf7; color: #333333; font-family: 'Comic Sans MS', 'Chalkboard SE', sans-serif; padding: 20px;",
+  // Global Container: Percentage width for mobile, max-width for desktop
+  container: "width: 100%; max-width: 600px; margin: 0 auto; background-color: #fdfbf7; color: #333333; font-family: 'Comic Sans MS', 'Chalkboard SE', 'Microsoft YaHei', sans-serif; padding: 20px; box-sizing: border-box;",
   
   // Header
   header: "text-align: center; margin-bottom: 30px; border-bottom: 2px dashed #bbb; padding-bottom: 20px;",
-  headerTitle: "font-size: 32px; font-weight: bold; margin: 0; color: #4a4a4a; text-transform: uppercase; letter-spacing: 2px;",
-  headerMeta: "font-family: monospace; color: #888; font-size: 14px; margin-top: 5px;",
+  headerTitle: "font-size: 28px; font-weight: bold; margin: 0; color: #4a4a4a; text-transform: uppercase; letter-spacing: 1px; line-height: 1.2;",
+  headerMeta: "font-family: 'Courier New', monospace; color: #888; font-size: 12px; margin-top: 5px;",
   
   // Section Headers
   sectionContainer: "margin-bottom: 30px;",
-  sectionTitle: "background-color: #333; color: #fff; padding: 8px 15px; font-size: 18px; font-weight: bold; display: inline-block; transform: rotate(-1deg); box-shadow: 3px 3px 0px rgba(0,0,0,0.2); margin-bottom: 15px; border-radius: 4px;",
+  sectionTitle: "background-color: #333; color: #fff; padding: 8px 15px; font-size: 18px; font-weight: bold; display: inline-block; transform: rotate(-1deg); box-shadow: 3px 3px 0px rgba(0,0,0,0.2); margin-bottom: 15px; border-radius: 4px; max-width: 90%; word-break: break-word;",
   
   // Cards
-  card: "background-color: #ffffff; border: 2px solid #333; border-radius: 8px; padding: 15px; margin-bottom: 15px; box-shadow: 4px 4px 0px #e0e0e0; position: relative;",
+  card: "background-color: #ffffff; border: 2px solid #333; border-radius: 8px; padding: 15px; margin-bottom: 15px; box-shadow: 4px 4px 0px #e0e0e0; position: relative; overflow: hidden;",
   
   // Card Content
-  cardHeader: "display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;",
-  cardTitle: "font-size: 18px; font-weight: bold; line-height: 1.3; margin: 0; flex: 1; color: #000;",
-  scoreBadge: "background-color: #ffeb3b; border: 2px solid #333; font-weight: bold; font-family: monospace; padding: 2px 6px; font-size: 12px; border-radius: 4px; margin-left: 10px; box-shadow: 2px 2px 0px rgba(0,0,0,0.1);",
+  cardHeader: "display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; gap: 8px;",
+  cardTitle: "font-size: 18px; font-weight: bold; line-height: 1.3; margin: 0; flex: 1 1 200px; color: #000; min-width: 60%;",
   
-  tags: "margin-bottom: 10px; font-size: 12px; font-family: monospace;",
-  tag: "background-color: #e0f7fa; padding: 2px 6px; border-radius: 4px; margin-right: 5px; border: 1px solid #b2ebf2; display: inline-block;",
+  // Score Block
+  scoreContainer: "display: flex; align-items: center; background-color: #ffeb3b; border: 2px solid #333; padding: 2px 6px; border-radius: 4px; box-shadow: 2px 2px 0px rgba(0,0,0,0.1); white-space: nowrap;",
+  scoreBadge: "font-weight: bold; font-family: 'Courier New', monospace; font-size: 14px;",
+  scoreReason: "font-size: 10px; border-left: 1px solid #333; margin-left: 5px; padding-left: 5px; opacity: 0.8; max-width: 80px; overflow: hidden; text-overflow: ellipsis;",
+  
+  tags: "margin-bottom: 10px; font-size: 12px; font-family: 'Courier New', monospace; display: flex; flex-wrap: wrap; gap: 4px;",
+  tag: "background-color: #e0f7fa; padding: 2px 6px; border-radius: 4px; border: 1px solid #b2ebf2; display: inline-block;",
   
   // Summary
-  summary: "font-family: 'Verdana', sans-serif; font-size: 14px; line-height: 1.6; color: #444; margin-bottom: 12px;",
+  summary: "font-family: 'Verdana', 'Microsoft YaHei', sans-serif; font-size: 14px; line-height: 1.6; color: #444; margin-bottom: 12px; word-break: break-word;",
   summaryCn: "margin-bottom: 8px; font-weight: 500;",
   summaryEn: "color: #777; font-size: 0.9em; font-style: italic;",
   
   // Link
-  link: "display: inline-block; background-color: #333; color: #fff; text-decoration: none; padding: 6px 12px; font-size: 12px; font-weight: bold; border-radius: 4px; transition: opacity 0.2s;",
+  link: "display: inline-block; background-color: #333; color: #fff; text-decoration: none; padding: 8px 12px; font-size: 12px; font-weight: bold; border-radius: 4px; transition: opacity 0.2s;",
   
-  footer: "text-align: center; font-size: 12px; color: #aaa; margin-top: 40px; border-top: 1px solid #ddd; padding-top: 20px; font-family: monospace;"
+  footer: "text-align: center; font-size: 12px; color: #aaa; margin-top: 40px; border-top: 1px solid #ddd; padding-top: 20px; font-family: 'Courier New', monospace;"
 };
 
 const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigger, onReset }) => {
@@ -61,7 +65,10 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
       <div style="${SKETCH_STYLES.card}">
         <div style="${SKETCH_STYLES.cardHeader}">
            <div style="${SKETCH_STYLES.cardTitle}">${item.title}</div>
-           <div style="${SKETCH_STYLES.scoreBadge}">${item.ai_score}</div>
+           <div style="${SKETCH_STYLES.scoreContainer}">
+             <span style="${SKETCH_STYLES.scoreBadge}">${item.ai_score}</span>
+             <span style="${SKETCH_STYLES.scoreReason}" title="${item.ai_score_reason || ''}">${item.ai_score_reason || 'AI Score'}</span>
+           </div>
         </div>
         
         <div style="${SKETCH_STYLES.tags}">
@@ -86,34 +93,37 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
       <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <!-- Google Fonts for that 'Report' feel -->
+        <!-- Google Fonts -->
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <link href="https://fonts.googleapis.com/css2?family=Patrick+Hand&family=ZCOOL+KuaiLe&display=swap" rel="stylesheet">
         <title>Hajimi Morning Report</title>
       </head>
-      <body style="margin: 0; padding: 0; background-color: #eef2f5;">
-        <div style="${SKETCH_STYLES.container}">
-          <div style="${SKETCH_STYLES.header}">
-            <h1 style="${SKETCH_STYLES.headerTitle}">📝 HAJIMI MORNING REPORT</h1>
-            <div style="${SKETCH_STYLES.headerMeta}">
-               📅 ${new Date().toLocaleDateString('zh-CN')} | 🤖 AI GENERATED
+      <body style="margin: 0; padding: 0; background-color: #eef2f5; font-family: sans-serif;">
+        <!-- Wrapper for visual centering in browser -->
+        <div style="width: 100%; display: flex; justify-content: center;">
+            <div style="${SKETCH_STYLES.container}">
+            <div style="${SKETCH_STYLES.header}">
+                <h1 style="${SKETCH_STYLES.headerTitle}">📝 HAJIMI MORNING REPORT</h1>
+                <div style="${SKETCH_STYLES.headerMeta}">
+                📅 ${new Date().toLocaleDateString('zh-CN')} | 🤖 AI GENERATED
+                </div>
             </div>
-          </div>
-          
-          <div style="${SKETCH_STYLES.sectionContainer}">
-             <div style="${SKETCH_STYLES.sectionTitle}">🔥 TRENDS & CULTURE</div>
-             ${renderItems(data.social)}
-          </div>
-          
-          <div style="${SKETCH_STYLES.sectionContainer}">
-             <div style="${SKETCH_STYLES.sectionTitle} background-color: #27ae60;">🧬 HEALTH & SCIENCE</div>
-             ${renderItems(data.health)}
-          </div>
-          
-          <div style="${SKETCH_STYLES.footer}">
-            GENERATED BY 哈基米 AUTOMATION
-          </div>
+            
+            <div style="${SKETCH_STYLES.sectionContainer}">
+                <div style="${SKETCH_STYLES.sectionTitle}">🔥 TRENDS & CULTURE</div>
+                ${renderItems(data.social)}
+            </div>
+            
+            <div style="${SKETCH_STYLES.sectionContainer}">
+                <div style="${SKETCH_STYLES.sectionTitle} background-color: #27ae60;">🧬 HEALTH & SCIENCE</div>
+                ${renderItems(data.health)}
+            </div>
+            
+            <div style="${SKETCH_STYLES.footer}">
+                GENERATED BY 哈基米 AUTOMATION
+            </div>
+            </div>
         </div>
       </body>
       </html>
@@ -182,7 +192,7 @@ const PipelineView: React.FC<PipelineViewProps> = ({ status, logs, data, onTrigg
               </div>
               <div className="flex-1 overflow-y-auto bg-[#eef2f5] p-4">
                 {activeTab === 'preview' ? (
-                  <div className="max-w-[640px] mx-auto bg-white shadow-xl min-h-[600px]">
+                  <div className="max-w-full mx-auto bg-white shadow-xl min-h-[600px] flex justify-center">
                     <iframe title="Preview" srcDoc={generateHtml(data)} className="w-full h-[800px] border-none" sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin allow-scripts" />
                   </div>
                 ) : (
