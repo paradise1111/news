@@ -156,22 +156,40 @@ export async function GET(request: Request) {
         payload.tools = [{ googleSearch: {} }];
     }
 
-    const aiRes = await fetch(targetUrl, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify(payload)
-    });
+    // --- CRON API CALL WITH RETRY LOGIC ---
+    let aiJson;
+    try {
+        const fetchWithPayload = async (p: any) => {
+             const res = await fetch(targetUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                body: JSON.stringify(p)
+             });
+             const text = await res.text();
+             if (!res.ok) throw new Error(text); // Keep raw error text
+             return JSON.parse(text);
+        };
 
-    if (!aiRes.ok) {
-        const errText = await aiRes.text();
-        throw new Error(`AI API Error ${aiRes.status}: ${errText}`);
+        try {
+            aiJson = await fetchWithPayload(payload);
+        } catch (firstErr: any) {
+            const errorMsg = firstErr.message || '';
+            console.warn(`[Cron] First attempt failed: ${errorMsg}`);
+            
+            // Retry for generic proxy errors
+            if (errorMsg.includes("tool") || errorMsg.includes("bad_response_status_code") || errorMsg.includes("openai_error")) {
+                 console.log("[Cron] Retrying without tools/json_format...");
+                 if (payload.tools) delete payload.tools;
+                 if (payload.response_format) delete payload.response_format;
+                 aiJson = await fetchWithPayload(payload);
+            } else {
+                throw firstErr;
+            }
+        }
+    } catch (finalErr: any) {
+        throw new Error(`AI Request Failed: ${finalErr.message}`);
     }
 
-    const aiJson = await aiRes.json();
-    
     // Check for API-level errors inside 200 response
     if (aiJson.error) {
         throw new Error(`AI API Error (in body): ${aiJson.error.message || JSON.stringify(aiJson.error)}`);

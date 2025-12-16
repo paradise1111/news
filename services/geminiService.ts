@@ -333,11 +333,18 @@ export const generateDailyDigest = async (
         const errorMsg = (err.message || '').toLowerCase();
         console.warn("First attempt failed:", errorMsg);
 
-        // Retry logic for common errors
-        if (errorMsg.includes("tool") || errorMsg.includes("googlesearch") || errorMsg.includes("response_format")) {
-             onLog(`首次请求遇到了不支持的参数 (${errorMsg})，正在降级重试...`);
+        // Retry logic for common errors AND generic proxy errors (bad_response_status_code)
+        if (
+            errorMsg.includes("tool") || 
+            errorMsg.includes("googlesearch") || 
+            errorMsg.includes("response_format") ||
+            errorMsg.includes("bad_response_status_code") || 
+            errorMsg.includes("openai_error")
+        ) {
+             onLog(`首次请求遇到了兼容性问题 (${errorMsg.substring(0, 50)}...)。正在尝试自动降级 (移除搜索工具/强制JSON模式) 重试...`);
              if (payload.tools) delete payload.tools;
-             if (payload.response_format) delete payload.response_format; // Remove JSON mode if unsupported
+             // Some proxies also fail on response_format if tools failed
+             if (payload.response_format) delete payload.response_format;
              
              responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
         } else {
