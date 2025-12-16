@@ -1,3 +1,4 @@
+
 'use client';
 
 import React, { useState } from 'react';
@@ -96,10 +97,21 @@ const App: React.FC = () => {
       
       setStatus(AppStatus.COMPLETE);
 
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
       setStatus(AppStatus.ERROR);
-      addLog(`任务失败: ${error instanceof Error ? error.message : '未知错误'}`, 'error');
+      
+      // FIX: Robust error message extraction to prevent [object Object]
+      let msg = '未知错误';
+      if (typeof error === 'string') {
+          msg = error;
+      } else if (error instanceof Error) {
+          msg = error.message;
+      } else if (typeof error === 'object' && error !== null) {
+          msg = (error as any).message || JSON.stringify(error);
+      }
+      
+      addLog(`任务失败: ${msg}`, 'error');
     }
   };
 

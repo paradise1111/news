@@ -54,7 +54,12 @@ const openAIFetch = async (
        const errorText = await response.text();
        let errorJson;
        try { errorJson = JSON.parse(errorText); } catch { errorJson = { error: errorText || response.statusText }; }
-       throw new Error(`Proxy Error (${response.status}): ${errorJson.error || JSON.stringify(errorJson)}`);
+       
+       // FIX: Ensure error detail is a string, not [object Object]
+       const rawError = errorJson.error || errorJson;
+       const errorDetail = typeof rawError === 'string' ? rawError : JSON.stringify(rawError);
+
+       throw new Error(`Proxy Error (${response.status}): ${errorDetail}`);
     }
 
     // --- 处理 SSE (Server-Sent Events) 响应 ---
@@ -91,7 +96,9 @@ const openAIFetch = async (
                     if (hasError) {
                         try {
                             const errObj = JSON.parse(dataContent);
-                            errorMessage = errObj.error || "Proxy Upstream Error";
+                            // FIX: Ensure errorMessage is a string
+                            const rawErr = errObj.error || errObj.message || errObj;
+                            errorMessage = typeof rawErr === 'string' ? rawErr : JSON.stringify(rawErr);
                         } catch {
                             errorMessage = dataContent;
                         }
@@ -359,7 +366,8 @@ export const generateDailyDigest = async (
     return data as DigestData;
 
   } catch (error: any) {
-    onLog(`任务失败: ${error.message}`);
+    const errorMsg = typeof error.message === 'string' ? error.message : JSON.stringify(error);
+    onLog(`任务失败: ${errorMsg}`);
     throw error;
   }
 };
