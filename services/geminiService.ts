@@ -102,21 +102,25 @@ const openAIFetch = async (
                             if (parsed.choices?.[0]?.delta?.content) {
                                 finalJsonString += parsed.choices[0].delta.content;
                             }
+                            // 1b. DeepSeek 或其他 Thinking 模型 (delta.reasoning_content)
+                            // 我们目前不显示思考过程，但需要防止因此导致的空响应报错
+                            else if (parsed.choices?.[0]?.delta?.reasoning_content) {
+                                // console.debug("Thinking...", parsed.choices[0].delta.reasoning_content);
+                            }
                             // 2. 非标准/其他流式格式 (text)
                             else if (parsed.choices?.[0]?.text) {
                                 finalJsonString += parsed.choices[0].text;
                             }
                             // 3. 代理包装的非流式完整响应 (Case B in proxy)
                             else if (typeof parsed === 'string') {
-                                finalJsonString += parsed; // 如果代理发来的是简单的字符串片段
+                                finalJsonString += parsed; 
                             }
                             // 4. 某些模型直接返回完整 message 对象
                             else if (parsed.choices?.[0]?.message?.content) {
-                                // 这是一个完整包，不是增量，通常不应该在流模式下发生，但为了兼容：
                                 finalJsonString = parsed.choices[0].message.content;
                             }
                         } catch (e) {
-                            // 忽略解析错误的行，可能是截断的 JSON
+                            // 忽略解析错误的行
                         }
                     }
                 }
@@ -127,22 +131,32 @@ const openAIFetch = async (
             throw new Error(errorMessage || "Stream Error (Unknown)");
         }
         
-        if (!finalJsonString) {
-            throw new Error("Stream closed without data");
+        // 如果最终字符串为空，可能是只输出了 thinking 过程，或者真的空了
+        if (!finalJsonString || !finalJsonString.trim()) {
+            throw new Error("Stream finished but content is empty. (Model may have only output reasoning or failed silently)");
         }
 
-        // Final Parse
+        // --- Robust Parsing Logic ---
         try {
+            // 1. Try direct parse
             return JSON.parse(finalJsonString);
         } catch (e) {
-            console.error("Failed to parse reconstructed JSON. Raw string (last 200 chars):", finalJsonString.slice(-200));
-            // 尝试简单的 Markdown 清理后再试一次
-            try {
-                const cleaned = finalJsonString.replace(/```json/g, "").replace(/```/g, "").trim();
-                return JSON.parse(cleaned);
-            } catch (e2) {
-                 throw new Error("Proxy response was not valid JSON after streaming.");
+            // 2. Try to find the JSON object boundaries (Best effort extraction)
+            // This handles cases where model output contains markdown text before/after JSON
+            const firstBrace = finalJsonString.indexOf('{');
+            const lastBrace = finalJsonString.lastIndexOf('}');
+            
+            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+                const extracted = finalJsonString.substring(firstBrace, lastBrace + 1);
+                try {
+                    return JSON.parse(extracted);
+                } catch (e2) {
+                     console.error("Failed to parse extracted JSON block:", extracted.substring(0, 100) + "...");
+                }
             }
+
+            console.error("Final JSON Parse Failed. Raw content (start):", finalJsonString.substring(0, 200));
+            throw new Error("API response was not valid JSON. Please check the 'Logs' for raw output.");
         }
     } 
     
@@ -248,7 +262,7 @@ export const generateDailyDigest = async (
     ### Output Requirements
     1. **Depth**: Concise summary (40-60 words).
     2. **Translation**: Provide a professional Chinese translation.
-    3. **Format**: Return STRICT JSON.
+    3. **Format**: Return STRICT JSON. Do not use Markdown code blocks.
     
     JSON Structure:
     {

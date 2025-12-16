@@ -89,8 +89,12 @@ export async function POST(req: Request) {
               // --- 情况 B: 上游是普通 JSON (Non-Streaming) ---
               // 等待全部接收并包装成 SSE 发送
               const text = await upstreamRes.text();
+              
+              // CRITICAL FIX: Handle empty body from upstream (prevents client JSON.parse error)
+              const safeText = text || "{}"; 
+              
               // 我们手动伪造一个 SSE 事件，让前端统一用一种方式解析
-              const fakeSse = `data: ${JSON.stringify(text)}\n\n`; 
+              const fakeSse = `data: ${JSON.stringify(safeText)}\n\n`; 
               controller.enqueue(encoder.encode(fakeSse));
           }
 
