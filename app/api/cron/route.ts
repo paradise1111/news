@@ -216,6 +216,7 @@ async function runDigestJob() {
     const payload: any = {
         model: model,
         messages: [{ role: "user", content: prompt }],
+        max_tokens: 8192,
         response_format: { type: "json_object" }
     };
     if (!model.toLowerCase().includes('deepseek')) payload.tools = [{ googleSearch: {} }];
@@ -238,12 +239,25 @@ async function runDigestJob() {
     
     if (!content) throw new Error("AI returned empty content");
     
+    // Improved cleaning for Cron job as well
+    const cleanContent = content.replace(/```json/g, '').replace(/```/g, '').trim();
+
     try { 
-        digestData = JSON.parse(content); 
+        digestData = JSON.parse(cleanContent); 
     } catch { 
-         const match = content.match(/\{[\s\S]*\}/);
-         if (match) digestData = JSON.parse(match[0]);
-         else throw new Error("Failed to parse JSON");
+         // Fallback regex
+         const firstBrace = cleanContent.indexOf('{');
+         const lastBrace = cleanContent.lastIndexOf('}');
+         if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+             const extracted = cleanContent.substring(firstBrace, lastBrace + 1);
+             try {
+                 digestData = JSON.parse(extracted);
+             } catch {
+                 throw new Error("Failed to parse JSON after extraction.");
+             }
+         } else {
+             throw new Error("Failed to parse JSON");
+         }
     }
     
     if (!digestData.social) digestData.social = [];

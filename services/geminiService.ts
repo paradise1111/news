@@ -125,20 +125,30 @@ const openAIFetch = async (
             throw new Error("Stream finished but content is empty.");
         }
 
+        // --- JSON CLEANING LOGIC ---
+        // 1. Remove Markdown code blocks (```json ... ```)
+        let cleanRaw = finalJsonString
+            .replace(/```json/g, '')
+            .replace(/```/g, '')
+            .trim();
+
         try {
-            return JSON.parse(finalJsonString);
+            return JSON.parse(cleanRaw);
         } catch (e) {
-            const firstBrace = finalJsonString.indexOf('{');
-            const lastBrace = finalJsonString.lastIndexOf('}');
+            // 2. Fallback: Find first '{' and last '}'
+            const firstBrace = cleanRaw.indexOf('{');
+            const lastBrace = cleanRaw.lastIndexOf('}');
+            
             if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-                const extracted = finalJsonString.substring(firstBrace, lastBrace + 1);
+                const extracted = cleanRaw.substring(firstBrace, lastBrace + 1);
                 try {
                     return JSON.parse(extracted);
                 } catch (e2) {
-                     console.error("Failed to parse extracted JSON block");
+                     console.error("Failed to parse extracted JSON block:", e2);
                 }
             }
-            throw new Error("API response was not valid JSON.");
+            console.error("Invalid JSON String:", finalJsonString.substring(0, 200) + "...");
+            throw new Error("API response was not valid JSON. (Parsing Failed)");
         }
     } 
     
@@ -277,6 +287,7 @@ export const generateDailyDigest = async (
       }
     ],
     stream: true,
+    max_tokens: 8192, // Increased to prevent truncated JSON
     tools: [
         { googleSearch: {} }
     ],
