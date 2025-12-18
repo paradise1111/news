@@ -64,26 +64,29 @@ const openAIFetch = async (
   const normalizedBase = normalizeBaseUrl(baseUrl);
   const targetUrl = endpoint.startsWith('http') ? endpoint : `${normalizedBase}${endpoint}`;
 
+  // 关键修复：仅在非 GET/HEAD 请求时构造 body
+  const isPost = method.toUpperCase() === 'POST';
+  const finalBody = isPost ? {
+      ...body,
+      safetySettings: [
+          { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+          { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+      ]
+  } : undefined;
+
   const response = await fetch('/api/proxy', {
-    method: 'POST',
+    method: 'POST', // 代理始终用 POST 通讯
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       targetUrl,
-      method,
+      method, // 这里传递给上游的真实方法（GET 或 POST）
       headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
       },
-      body: {
-          ...body,
-          // 尝试降低安全过滤（仅部分中转支持）
-          safetySettings: [
-              { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-              { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-              { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-              { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
-          ]
-      } 
+      body: finalBody 
     }),
   });
 
@@ -125,7 +128,6 @@ const openAIFetch = async (
                       if (hasError) {
                           lastErrorMessage = parsed.error?.message || parsed.error || lastErrorMessage;
                       } else {
-                          // 兼容多种格式：delta.content, delta.text, 或者直接 message.content
                           const content = parsed.choices?.[0]?.delta?.content 
                                        || parsed.choices?.[0]?.delta?.text
                                        || parsed.choices?.[0]?.text 
@@ -133,7 +135,6 @@ const openAIFetch = async (
                           fullContent += content;
                       }
                   } catch (e) {
-                      // 如果 JSON 解析失败，可能是原始字符串（部分非标代理）
                       if (!hasError && !dataStr.startsWith('{')) fullContent += dataStr;
                   }
               }
@@ -141,21 +142,19 @@ const openAIFetch = async (
       }
 
       if (hasError) throw new Error(lastErrorMessage || "流式传输中断");
-      if (!fullContent) {
-          // 如果流结束了但内容为空，可能是安全策略拦截了所有输出
-          throw new Error("模型响应为空。这通常是因为触发了 API 的安全审核策略，或者中转站配置有误。请尝试更换模型或修改 Prompt。");
-      }
+      if (!fullContent) throw new Error("模型响应为空，可能被安全策略拦截。");
       return fullContent;
   } 
   
   const result = await response.json();
+  // 某些接口直接返回结果，某些包裹在 choices 中
   return result.choices?.[0]?.message?.content || result;
 };
 
 export const checkModelAvailability = async (apiKey: string, baseUrl: string, modelId: string) => {
   const start = Date.now();
   try {
-    const res = await openAIFetch(baseUrl, apiKey, '/chat/completions', {
+    await openAIFetch(baseUrl, apiKey, '/chat/completions', {
       model: modelId,
       messages: [{ role: "user", content: "hi" }],
       max_tokens: 5,
@@ -181,26 +180,13 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
 
 export const generateDailyDigest = async (config: AppConfig, onLog: (msg: string) => void): Promise<DigestData> => {
   const todayStr = new Date().toISOString().split('T')[0];
-
-  // --- 阶段 1: 发现 ---
   onLog(`[第一步] 正在请求模型发现资讯链接...`);
   
-  const discoveryPrompt = `
-    你是一个专业的新闻编辑。今天是 ${todayStr}。
-    请搜索并列举今天全球发生的 10 条真实社会新闻和 10 条真实健康医疗进展。
-    
-    规则：
-    1. 必须提供真实的原始长链接 (URL)，禁止缩写链接或伪造链接。
-    2. 链接必须是可以直接访问的新闻正文页。
-    3. 如果话题敏感，请选择较温和但真实的新闻。
-    4. 严格以 JSON 格式输出：{"candidates": [{"title": "新闻标题", "url": "https://...", "category": "social"}]}
-  `;
+  const discoveryPrompt = `请提供 ${todayStr} 发生的全球 10 条社会热点和 10 条健康资讯。必须包含真实的原始 URL，严禁捏造。仅输出 JSON 格式：{"candidates": [{"title": "标题", "url": "URL", "category": "social"}]}`;
 
   const discoveryRaw = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', {
     model: config.model,
-    messages: [
-        { role: "user", content: `System: 你是一个只输出 JSON 且严格遵循新闻真实性的机器人。\n\nUser: ${discoveryPrompt}` }
-    ],
+    messages: [{ role: "user", content: discoveryPrompt }],
     stream: true,
     max_tokens: 4000,
     temperature: 0.3
@@ -208,46 +194,25 @@ export const generateDailyDigest = async (config: AppConfig, onLog: (msg: string
 
   const discoveryData = extractJson(discoveryRaw);
   const candidates = (discoveryData.candidates || []) as { title: string, url: string, category: string }[];
+  if (candidates.length === 0) throw new Error("未找到资讯链接。");
 
-  if (candidates.length === 0) throw new Error("模型未找到任何资讯链接，请尝试刷新重试。");
-
-  // --- 阶段 2: 验证 ---
-  onLog(`[检查点] 正在物理验证 ${candidates.length} 条链接...`);
+  onLog(`[检查点] 正在验证 ${candidates.length} 条链接...`);
   const validatedItems: { title: string, url: string, category: string }[] = [];
-  
   const results = await Promise.all(candidates.map(async (item) => {
       const ok = await validateUrl(item.url);
       return ok ? item : null;
   }));
-
   results.forEach(r => { if(r) validatedItems.push(r); });
 
-  if (validatedItems.length === 0) {
-      throw new Error(`AI 提供的链接 (${candidates.length}个) 均不可访问或为虚假链接。请检查 API 渠道质量或更换 Pro 模型。`);
-  }
-  onLog(`成功验证：${validatedItems.length} 条真实有效链接。`);
+  if (validatedItems.length === 0) throw new Error("链接验证全部失败。");
+  onLog(`成功验证 ${validatedItems.length} 条链接。`);
 
-  // --- 阶段 3: 精编 ---
-  onLog(`[第二步] 正在基于验证成功的 ${validatedItems.length} 条链接生成摘要...`);
-  const elaborationPrompt = `
-    请根据以下验证成功的真实内容源，编写今日 Daily Digest 报表。
-    
-    源链接列表：
-    ${validatedItems.map((v, i) => `${i+1}. [${v.category}] ${v.title} | ${v.url}`).join('\n')}
-
-    要求：
-    - summary_cn: 详细的中文总结，150字左右，客观专业。
-    - summary_en: 简短的英文总结。
-    - ai_score: 价值评分 (0-100)。
-    - xhs_titles: 针对健康资讯，提供 3 个小红书风格的爆款标题。
-    - 仅输出 JSON：{"social": [...], "health": [...]}
-  `;
+  onLog(`[第二步] 正在生成日报精编...`);
+  const elaborationPrompt = `根据以下源链接编写日报，包含 summary_cn (150字), summary_en, ai_score, xhs_titles。源：${validatedItems.map(v => v.url).join(',')}`;
 
   const elaborationRaw = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', {
     model: config.model,
-    messages: [
-        { role: "user", content: `System: 你是一个金牌日报主编，请严格以 JSON 形式输出内容。\n\nUser: ${elaborationPrompt}` }
-    ],
+    messages: [{ role: "user", content: elaborationPrompt }],
     stream: true,
     max_tokens: 6000,
     temperature: 0.6

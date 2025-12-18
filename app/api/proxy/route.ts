@@ -30,13 +30,19 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing targetUrl parameter' }, { status: 400 });
     }
 
-    const isStreamRequest = method?.toUpperCase() === 'POST' && body?.stream === true;
+    const normalizedMethod = (method || 'GET').toUpperCase();
+    const isStreamRequest = normalizedMethod === 'POST' && body?.stream === true;
+    
+    // 规范检查：GET/HEAD 请求严禁携带 body
+    const finalBody = (normalizedMethod === 'GET' || normalizedMethod === 'HEAD') 
+      ? undefined 
+      : (body ? JSON.stringify(body) : undefined);
 
     if (!isStreamRequest) {
       const simpleRes = await fetch(targetUrl, {
-        method: method || 'GET',
+        method: normalizedMethod,
         headers: headers || {},
-        body: body ? JSON.stringify(body) : undefined,
+        body: finalBody,
       });
 
       const resBody = await simpleRes.arrayBuffer();
@@ -57,12 +63,11 @@ export async function POST(req: Request) {
           const upstreamRes = await fetch(targetUrl, {
             method: 'POST',
             headers: headers || {},
-            body: JSON.stringify(body),
+            body: finalBody,
           });
 
           if (!upstreamRes.ok) {
             const errText = await upstreamRes.text();
-            // 将上游的错误包装成 SSE 错误事件发送
             controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: errText })}\n\n`));
             controller.close();
             return;
