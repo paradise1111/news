@@ -1,7 +1,8 @@
 
 import { NextResponse } from 'next/server';
 
-export const runtime = 'edge';
+export const runtime = 'nodejs'; // 切换为 nodejs 以支持更长的运行时间
+export const maxDuration = 60;   // 设置最大时长为 60 秒
 
 export async function OPTIONS() {
   return new NextResponse(null, {
@@ -44,7 +45,6 @@ export async function POST(req: Request) {
         body: finalBody,
       });
 
-      // 关键改进：如果上游报错，把上游的报错内容透传给前端
       if (!upstreamRes.ok) {
           const errorText = await upstreamRes.text();
           let errorJson;
