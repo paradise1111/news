@@ -1,19 +1,78 @@
 
-import { AppConfig, DigestData, ModelOption } from "../types";
+import { AppConfig, DigestData, ModelOption, DigestItem } from "../types";
 import { DEFAULT_MODELS } from "../constants";
 
-// Helper: Normalize Base URL to ensure it ends with /v1 convention if missing
+// 更加灵活的 URL 处理：不强制补全，仅在必要时纠正
 const normalizeBaseUrl = (url: string): string => {
   let cleaned = url.trim().replace(/\/+$/, '');
-  
-  if (!cleaned.endsWith('/v1')) {
-      console.log(`[Auto-Fix] Appending /v1 to Base URL: ${cleaned} -> ${cleaned}/v1`);
-      return `${cleaned}/v1`;
-  }
+  if (!cleaned) return '';
+  if (cleaned.endsWith('/v1') || cleaned.includes('/v1/')) return cleaned;
+  if (!cleaned.includes('/')) return `${cleaned}/v1`;
   return cleaned;
 };
 
-// Generic Fetcher for OpenAI-Compatible APIs via Universal Edge Proxy
+/**
+ * 极强容错的 JSON 提取器
+ */
+const extractJson = (str: string): any => {
+    if (typeof str !== 'string') return str;
+    const text = str.trim();
+    if (!text) throw new Error("AI 返回了空内容。");
+
+    try { return JSON.parse(text); } catch (e) {}
+
+    let cleaned = text
+        .replace(/^[\s\S]*?```json/g, '')
+        .replace(/```[\s\S]*?$/g, '')
+        .trim();
+    
+    try { return JSON.parse(cleaned); } catch (e) {}
+
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    
+    if (start !== -1 && end !== -1 && end > start) {
+        const potentialJson = text.substring(start, end + 1);
+        try {
+            return JSON.parse(potentialJson);
+        } catch (e) {
+            const sanitized = potentialJson
+                .replace(/,\s*([\]}])/g, '$1')
+                .replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
+            try { return JSON.parse(sanitized); } catch (e2) {}
+        }
+    }
+    throw new Error(`无法从输出中提取有效的 JSON 数据。`);
+};
+
+/**
+ * 验证 URL 是否可用 (通过代理绕过 CORS)
+ */
+const validateUrl = async (url: string): Promise<boolean> => {
+    try {
+        const response = await fetch('/api/proxy', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                targetUrl: url,
+                method: 'HEAD', // 使用 HEAD 请求快速检查
+                headers: { 'User-Agent': 'Mozilla/5.0' }
+            }),
+        });
+        // 只要不是 404 或 5xx，且代理成功返回数据流/响应，我们姑且认为它存在
+        // 注意：代理返回的是 SSE 流，如果 event 为 error 则代表失败
+        const reader = response.body?.getReader();
+        if (!reader) return false;
+        
+        const { value } = await reader.read();
+        const decoder = new TextDecoder();
+        const firstChunk = decoder.decode(value);
+        return !firstChunk.includes('event: error');
+    } catch {
+        return false;
+    }
+};
+
 const openAIFetch = async (
   baseUrl: string,
   apiKey: string,
@@ -22,55 +81,39 @@ const openAIFetch = async (
   method: string = 'POST'
 ) => {
   const normalizedBase = normalizeBaseUrl(baseUrl);
-  const targetUrl = `${normalizedBase}${endpoint}`;
+  const targetUrl = endpoint.startsWith('http') ? endpoint : `${normalizedBase}${endpoint}`;
 
-  console.log(`[Proxy Request] -> ${method} ${targetUrl}`);
-
-  // 180秒客户端超时
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 180000); 
 
   try {
     const response = await fetch('/api/proxy', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
       body: JSON.stringify({
-        targetUrl: targetUrl,
+        targetUrl,
         method,
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiKey}`
         },
-        body: body 
+        body 
       }),
     });
 
     clearTimeout(timeoutId);
 
-    if (!response.ok) {
-       const errorText = await response.text();
-       let errorJson;
-       try { errorJson = JSON.parse(errorText); } catch { errorJson = { error: errorText || response.statusText }; }
-       
-       const rawError = errorJson.error || errorJson;
-       const errorDetail = typeof rawError === 'string' ? rawError : JSON.stringify(rawError);
-
-       throw new Error(`Proxy Error (${response.status}): ${errorDetail}`);
-    }
-
     const contentType = response.headers.get('content-type');
     if (contentType && contentType.includes('text/event-stream')) {
         const reader = response.body?.getReader();
-        if (!reader) throw new Error("ReadableStream not supported");
+        if (!reader) throw new Error("代理不支持流式传输");
         
         const decoder = new TextDecoder();
         let buffer = '';
-        let finalJsonString = '';
+        let fullContent = '';
         let hasError = false;
-        let errorMessage = '';
+        let streamErrorMessage = '';
 
         while (true) {
             const { done, value } = await reader.read();
@@ -81,102 +124,56 @@ const openAIFetch = async (
             buffer = lines.pop() || '';
 
             for (const line of lines) {
-                const trimmedLine = line.trim();
-                if (!trimmedLine) continue;
-                if (trimmedLine.startsWith(':')) continue;
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.startsWith(':')) continue;
 
-                if (trimmedLine.startsWith('event: error')) {
+                if (trimmed.startsWith('event: error')) {
                     hasError = true;
-                } else if (trimmedLine.startsWith('data: ')) {
-                    const dataContent = trimmedLine.substring(6);
-                    if (dataContent === '[DONE]') continue;
-                    
-                    if (hasError) {
-                        try {
-                            const errObj = JSON.parse(dataContent);
-                            const rawErr = errObj.error || errObj.message || errObj;
-                            errorMessage = typeof rawErr === 'string' ? rawErr : JSON.stringify(rawErr);
-                        } catch {
-                            errorMessage = dataContent;
+                } else if (trimmed.startsWith('data: ')) {
+                    const dataStr = trimmed.substring(6);
+                    if (dataStr === '[DONE]') continue;
+                    try {
+                        const parsed = JSON.parse(dataStr);
+                        if (hasError) {
+                            streamErrorMessage = parsed.error?.message || streamErrorMessage || dataStr;
+                        } else {
+                            const content = parsed.choices?.[0]?.delta?.content || 
+                                           parsed.choices?.[0]?.text || 
+                                           (typeof parsed === 'string' ? parsed : '');
+                            fullContent += content;
                         }
-                    } else {
-                        try {
-                            const parsed = JSON.parse(dataContent);
-                            if (parsed.choices?.[0]?.delta?.content) {
-                                finalJsonString += parsed.choices[0].delta.content;
-                            } else if (parsed.choices?.[0]?.text) {
-                                finalJsonString += parsed.choices[0].text;
-                            } else if (typeof parsed === 'string') {
-                                finalJsonString += parsed; 
-                            } else if (parsed.choices?.[0]?.message?.content) {
-                                finalJsonString = parsed.choices[0].message.content;
-                            }
-                        } catch (e) { }
+                    } catch (e) {
+                        if (!hasError) fullContent += dataStr;
                     }
                 }
             }
         }
-
-        if (hasError || errorMessage) {
-            throw new Error(errorMessage || "Stream Error (Unknown)");
-        }
-        
-        if (!finalJsonString || !finalJsonString.trim()) {
-            throw new Error("Stream finished but content is empty.");
-        }
-
-        // --- JSON CLEANING LOGIC ---
-        // 1. Remove Markdown code blocks (```json ... ```)
-        let cleanRaw = finalJsonString
-            .replace(/```json/g, '')
-            .replace(/```/g, '')
-            .trim();
-
-        try {
-            return JSON.parse(cleanRaw);
-        } catch (e) {
-            // 2. Fallback: Find first '{' and last '}'
-            const firstBrace = cleanRaw.indexOf('{');
-            const lastBrace = cleanRaw.lastIndexOf('}');
-            
-            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-                const extracted = cleanRaw.substring(firstBrace, lastBrace + 1);
-                try {
-                    return JSON.parse(extracted);
-                } catch (e2) {
-                     console.error("Failed to parse extracted JSON block:", e2);
-                }
-            }
-            console.error("Invalid JSON String:", finalJsonString.substring(0, 200) + "...");
-            throw new Error("API response was not valid JSON. (Parsing Failed)");
-        }
+        if (hasError) throw new Error(streamErrorMessage || "流式连接中途报错");
+        return fullContent;
     } 
     
-    return await response.json();
+    const result = await response.json();
+    if (result.error) throw new Error(`[API Error] ${result.error.message || JSON.stringify(result.error)}`);
+    if (!response.ok) throw new Error(`HTTP 异常 (${response.status})`);
+    return result;
 
   } catch (error: any) {
       clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
-          throw new Error("请求超时。任务耗时过长，建议减少生成内容数量。");
-      }
       throw error;
   }
 };
 
-export const checkModelAvailability = async (
-  apiKey: string, 
-  baseUrl: string, 
-  modelId: string
-): Promise<{ available: boolean; latency?: number; error?: string }> => {
+export const checkModelAvailability = async (apiKey: string, baseUrl: string, modelId: string) => {
   const start = Date.now();
   try {
-    await openAIFetch(baseUrl, apiKey, '/chat/completions', {
+    const res = await openAIFetch(baseUrl, apiKey, '/chat/completions', {
       model: modelId,
-      messages: [{ role: "user", content: "Hi" }],
+      messages: [{ role: "user", content: "ping" }],
       max_tokens: 5,
       stream: false
     });
-    return { available: true, latency: Date.now() - start };
+    if (res.choices || res.id) return { available: true, latency: Date.now() - start };
+    throw new Error("响应格式异常");
   } catch (error: any) {
     return { available: false, error: error.message };
   }
@@ -184,16 +181,9 @@ export const checkModelAvailability = async (
 
 export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Promise<ModelOption[]> => {
   try {
-    console.log("Fetching models list from OpenAI-compatible endpoint...");
     const data = await openAIFetch(baseUrl, apiKey, '/models', undefined, 'GET');
-    
     if (data && Array.isArray(data.data)) {
-        const models = data.data.map((m: any) => ({
-            id: m.id,
-            name: m.id,
-            status: 'unknown'
-        }));
-        return models.length > 0 ? models : DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption));
+        return data.data.map((m: any) => ({ id: m.id, name: m.id, status: 'unknown' }));
     }
     return DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption));
   } catch (e: any) {
@@ -201,150 +191,94 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
   }
 };
 
-export const generateDailyDigest = async (
-  config: AppConfig, 
-  onLog: (msg: string) => void
-): Promise<DigestData> => {
-  onLog(`正在初始化 (API 模式: OpenAI 兼容流式, 模型: ${config.model})...`);
+export const generateDailyDigest = async (config: AppConfig, onLog: (msg: string) => void): Promise<DigestData> => {
+  const todayStr = new Date().toISOString().split('T')[0];
+  const isCustomModel = config.model.includes('花之悦') || config.model.includes('tavo') || /[\u4e00-\u9fa5]/.test(config.model);
 
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
-  
-  // Format: YYYY-MM-DD
-  const todayStr = today.toISOString().split('T')[0];
-  const targetDateStr = yesterday.toISOString().split('T')[0];
-  const targetDateHuman = yesterday.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-
-  onLog(`当前日期: ${todayStr}`);
-  onLog(`目标新闻日期: ${targetDateStr} (${targetDateHuman})`);
-
-  // UPGRADED PROMPT: Zero Tolerance for Broken Links
-  const prompt = `
-    You are an automated Daily Information Digest agent.
-    
-    ### TIME CONTEXT (ABSOLUTE)
-    - **Current Date**: ${todayStr}
-    - **TARGET DATE**: ${targetDateStr}
-    - **RULE**: IGNORE sources older than ${targetDateStr}.
-    
-    ### ANTI-HALLUCINATION PROTOCOL (ZERO TOLERANCE)
-    1. **NO GUESSING**: Do NOT construct URLs (e.g., do not invent "cnn.com/2024/...").
-    2. **VERBATIM ONLY**: You MUST use the *exact* URL returned by the Google Search tool.
-    3. **VERIFY**: Check the link before adding it. If the search result is just "www.cnn.com" (Home Page), **DISCARD THE ITEM ENTIRELY**.
-    4. **BETTER EMPTY THAN FAKE**: It is better to return 5 verified items with working deep links than 10 items with 404 links.
-    5. **DEEP LINKS**: URLs must end in an article slug or ID (e.g., .html, /article/..., /news/...).
-
-    ### INSTRUCTIONS
-    1. **Language**: 
-       - 'ai_score_reason': Chinese.
-       - 'summary_cn': Detailed Chinese (80-120 words).
-       - 'summary_en': Concise English.
-    
-    2. **XHS Strategy (Health/Life)**:
-       - 'xhs_titles': Array of 3 viral/clickbait titles.
-       - Tone: "Emotional", "Urgent", "Revealing".
-    
-    3. **Scoring**: Range 60-99.
-    
-    ### TASKS
-    **Task 1: Social/Trends** (Find 5-10 VERIFIED items)
-    **Task 2: Health/Life** (Find 5-10 VERIFIED items)
-
-    ### OUTPUT FORMAT (JSON ONLY)
-    {
-      "social": [
-        { 
-          "title": "...", 
-          "summary_en": "...", 
-          "summary_cn": "...", 
-          "source_url": "https://actual-verified-link...", 
-          "source_name": "...", 
-          "ai_score": 88, 
-          "ai_score_reason": "...", 
-          "tags": ["Tag1"] 
-        }
-      ],
-      "health": [
-        {
-          ...,
-          "xhs_titles": ["🔥Title 1", "Title 2", "Title 3"]
-        }
-      ]
-    }
+  // --- PHASE 1: DISCOVERY ---
+  onLog("第一阶段：正在通过 AI 搜索最新资讯（防幻觉模式）...");
+  const discoveryPrompt = `
+    Search for trending news from ${todayStr}.
+    Find 10 candidates for "social" and 10 candidates for "health".
+    Return ONLY a JSON object with a 'news' array. 
+    Each item: {"title": "...", "url": "...", "category": "social" | "health"}.
+    ONLY use real deep links from search results. DO NOT invent URLs.
+    Constraint: Output raw JSON, no Markdown.
   `;
 
-  const payload: any = {
+  const discoveryPayload: any = {
     model: config.model,
     messages: [
-      { 
-          role: "system", 
-          content: "You are a professional editor. You have ZERO TOLERANCE for fake or broken links. If you cannot find a specific deep link for a story in the search tools, you MUST SKIP that story. Do not invent URLs." 
-      },
-      { 
-          role: "user", 
-          content: prompt 
-      }
+        { role: "system", content: "You are a news researcher. Find real, high-quality news links. Output raw JSON only." },
+        { role: "user", content: discoveryPrompt }
     ],
     stream: true,
-    max_tokens: 8192, // Increased to prevent truncated JSON
-    tools: [
-        { googleSearch: {} }
-    ],
-    response_format: { type: "json_object" }
+    max_tokens: 2000,
+    temperature: 0.5
   };
+  if (!isCustomModel) discoveryPayload.tools = [{ googleSearch: {} }];
 
-  const isDeepSeek = config.model.toLowerCase().includes('deepseek');
-  if (isDeepSeek) {
-     console.log("DeepSeek model detected: Removing explicit Google Search tool definition.");
-     delete payload.tools;
-  }
+  const discoveryRaw = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', discoveryPayload);
+  const discoveryData = extractJson(discoveryRaw);
+  const candidates = (discoveryData.news || []) as { title: string, url: string, category: string }[];
 
-  try {
-    let responseData;
+  if (candidates.length === 0) throw new Error("未搜索到任何有效资讯候选项。");
+
+  // --- PHASE 2: VALIDATION ---
+  onLog(`第二阶段：正在验证 ${candidates.length} 条链接的可用性...`);
+  const validatedItems: { title: string, url: string, category: string }[] = [];
+  
+  // 并行验证
+  await Promise.all(candidates.map(async (item) => {
+      const isValid = await validateUrl(item.url);
+      if (isValid) {
+          validatedItems.push(item);
+      }
+  }));
+
+  if (validatedItems.length === 0) throw new Error("搜索到的链接全部失效，请尝试更换模型重试。");
+  onLog(`验证成功：${validatedItems.length} 条链接有效。`);
+
+  // --- PHASE 3: ELABORATION ---
+  onLog("第三阶段：正在针对验证过的链接生成精编摘要...");
+  const elaborationPrompt = `
+    Based on the following VERIFIED news links, generate a detailed Daily Digest in JSON format.
     
-    try {
-        onLog("发送请求中 (严格链接审查模式)...");
-        responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
+    Verified Links:
+    ${validatedItems.map((v, i) => `${i+1}. [${v.category}] ${v.title} - URL: ${v.url}`).join('\n')}
 
-    } catch(err: any) {
-        const errorMsg = (err.message || '').toLowerCase();
-        console.warn("First attempt failed:", errorMsg);
+    Requirements for each item:
+    - title: Professional news title.
+    - summary_cn: Detailed Chinese summary (80-120 words).
+    - summary_en: Concise English summary.
+    - source_name: The news portal name.
+    - source_url: Use the exact URL provided above.
+    - ai_score: 60-99.
+    - ai_score_reason: Chinese explanation for the score.
+    - tags: 2-3 relevant tags.
+    - xhs_titles: (For health items only) 3 viral Red Note style titles.
 
-        if (
-            errorMsg.includes("tool") || 
-            errorMsg.includes("googlesearch") || 
-            errorMsg.includes("response_format") || 
-            errorMsg.includes("bad_response_status_code") || 
-            errorMsg.includes("openai_error")
-        ) {
-             onLog(`自动降级重试中...`);
-             if (payload.tools) delete payload.tools;
-             if (payload.response_format) delete payload.response_format;
-             responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
-        } else {
-            throw err;
-        }
-    }
+    Output format: {"social": [...], "health": [...]}
+    Output MUST be raw JSON. NO conversational text.
+  `;
 
-    if (!responseData) throw new Error("API Response is null");
+  const elaborationPayload: any = {
+    model: config.model,
+    messages: [
+        { role: "system", content: "You are a professional editor. Summarize the provided news links accurately. Output raw JSON only." },
+        { role: "user", content: elaborationPrompt }
+    ],
+    stream: true,
+    max_tokens: 6000,
+    temperature: 0.7
+  };
+  if (!isCustomModel) elaborationPayload.response_format = { type: "json_object" };
 
-    const data = responseData;
-    onLog("数据接收完毕，正在校验结构...");
+  const elaborationRaw = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', elaborationPayload);
+  const finalData = extractJson(elaborationRaw);
 
-    if (!Array.isArray(data.social) && !Array.isArray(data.health)) {
-        const values = Object.values(data);
-        if (values.length > 0 && typeof values[0] === 'object') {
-             return values[0] as DigestData;
-        }
-        throw new Error("JSON structure invalid.");
-    }
-
-    return data as DigestData;
-
-  } catch (error: any) {
-    const errorMsg = typeof error.message === 'string' ? error.message : JSON.stringify(error);
-    onLog(`任务失败: ${errorMsg}`);
-    throw error;
-  }
+  if (!finalData.social && !finalData.health) throw new Error("生成的内容结构异常。");
+  
+  onLog("任务全部完成！日报已就绪。");
+  return finalData as DigestData;
 };
