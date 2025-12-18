@@ -1,6 +1,6 @@
+
 import { NextResponse } from 'next/server';
 
-// 切换到 Edge Runtime 以支持流式传输
 export const runtime = 'edge';
 
 export async function OPTIONS() {
@@ -30,78 +30,67 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing targetUrl parameter' }, { status: 400 });
     }
 
-    // --- 核心修改：流式透传与心跳保活 ---
+    // 判断是否需要流式处理：只有 POST 请求且明确开启了 stream 模式
+    const isStreamRequest = method?.toUpperCase() === 'POST' && body?.stream === true;
+
+    if (!isStreamRequest) {
+      // --- 非流式普通请求 (GET /models 等) ---
+      console.log(`[Edge Proxy] Simple Fetch: ${targetUrl}`);
+      const simpleRes = await fetch(targetUrl, {
+        method: method || 'GET',
+        headers: headers || {},
+        body: body ? JSON.stringify(body) : undefined,
+      });
+
+      const resBody = await simpleRes.arrayBuffer();
+      const resHeaders = new Headers(simpleRes.headers);
+      resHeaders.set('Access-Control-Allow-Origin', '*');
+
+      return new Response(resBody, {
+        status: simpleRes.status,
+        headers: resHeaders
+      });
+    }
+
+    // --- 流式请求 (Chat Completions) ---
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
-        
-        // 1. 立即发送首字节，满足 Vercel Edge 的 TTFB 要求，防止立即超时
         controller.enqueue(encoder.encode(": start_stream\n\n"));
         
-        // 用于控制心跳的定时器
-        // In Edge runtime, setInterval returns a number, not NodeJS.Timeout
         let intervalId: any = null;
-
         try {
-          console.log(`[Edge Proxy] Fetching: ${targetUrl} (Stream Mode)`);
-          
-          // 启动心跳 (每 5 秒一次)，防止在 fetch 等待期间连接断开
+          console.log(`[Edge Proxy] Stream Fetching: ${targetUrl}`);
           intervalId = setInterval(() => {
              try { controller.enqueue(encoder.encode(": keep-alive\n\n")); } catch { /* ignore */ }
           }, 5000);
 
           const upstreamRes = await fetch(targetUrl, {
-            method: method || 'POST',
+            method: 'POST',
             headers: headers || {},
-            body: body ? JSON.stringify(body) : undefined,
+            body: JSON.stringify(body),
           });
 
-          // 收到响应头后，清除心跳，准备传输真实数据
           if (intervalId) clearInterval(intervalId);
 
           if (!upstreamRes.ok) {
             const errText = await upstreamRes.text();
-            let errDataStr;
-            try {
-                const errJson = JSON.parse(errText);
-                errDataStr = JSON.stringify(errJson);
-            } catch {
-                errDataStr = JSON.stringify({ error: `Upstream ${upstreamRes.status}: ${errText}` });
-            }
-            controller.enqueue(encoder.encode(`event: error\ndata: ${errDataStr}\n\n`));
+            controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: errText })}\n\n`));
             controller.close();
             return;
           }
 
-          // 2. 处理上游响应
-          const contentType = upstreamRes.headers.get('content-type') || '';
-          
-          if (contentType.includes('text/event-stream') && upstreamRes.body) {
-              // --- 情况 A: 上游也是流式 (Streaming) ---
-              // 直接管道透传，这是解决 524 错误的关键
+          if (upstreamRes.body) {
               const reader = upstreamRes.body.getReader();
               while (true) {
                   const { done, value } = await reader.read();
                   if (done) break;
                   controller.enqueue(value);
               }
-          } else {
-              // --- 情况 B: 上游是普通 JSON (Non-Streaming) ---
-              // 等待全部接收并包装成 SSE 发送
-              const text = await upstreamRes.text();
-              
-              // CRITICAL FIX: Handle empty body from upstream (prevents client JSON.parse error)
-              const safeText = text || "{}"; 
-              
-              // 我们手动伪造一个 SSE 事件，让前端统一用一种方式解析
-              const fakeSse = `data: ${JSON.stringify(safeText)}\n\n`; 
-              controller.enqueue(encoder.encode(fakeSse));
           }
-
         } catch (err: any) {
            if (intervalId) clearInterval(intervalId);
-           const errData = JSON.stringify({ error: 'Proxy Fetch Error: ' + err.message });
-           controller.enqueue(encoder.encode(`event: error\ndata: ${errData}\n\n`));
+           controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: err.message })}\n\n`));
         } finally {
           controller.close();
         }
