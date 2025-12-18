@@ -21,7 +21,7 @@ const App: React.FC = () => {
   const handleConfigConfirmed = (newConfig: AppConfig) => {
     setConfig(newConfig);
     setStatus(AppStatus.READY);
-    addLog("配置已加载。成功连接到 Gemini API。", 'success');
+    addLog("配置已加载。模型: " + newConfig.model, 'success');
   };
 
   const handleTriggerPipeline = async (recipients: string[]) => {
@@ -33,31 +33,28 @@ const App: React.FC = () => {
 
     try {
       // Step 1: Generate Data (The "Brain")
-      // 如果已经有数据，复用数据（只发邮件）
       let data = digestData;
       if (!data) {
-        data = await generateDailyDigest(config, (msg) => addLog(msg, 'info'));
+        // Fix: Updated callback to handle 2 arguments, matching updated generateDailyDigest signature
+        data = await generateDailyDigest(config, (msg, type) => addLog(msg, type || 'info'));
         setDigestData(data);
         addLog("任务完成，预览就绪。", 'success');
       } else {
         addLog("使用已有的日报数据进行发送。", 'info');
       }
       
-      // Step 2: Delivery (Real Backend vs Simulation)
+      // Step 2: Delivery
       addLog(`准备推送邮件至 ${recipients.length} 位收件人: ${recipients.join(', ')}`, 'info');
 
       try {
-        // 尝试调用真实的后端 API
-        addLog("正在连接后端 API (/api/digest)...", 'info');
-        
         const response = await fetch('/api/digest', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            recipients: recipients, // 传递数组
-            digestData: data, // 发送原始数据，让后端生成 HTML
+            recipients: recipients,
+            digestData: data,
           }),
         });
 
@@ -66,32 +63,16 @@ const App: React.FC = () => {
         if (response.ok) {
            addLog(`后端发送成功! Resend ID: ${resData.id}`, 'success');
         } else {
-           // 如果 API 返回错误
            const errorMsg = resData.error || response.statusText;
            throw new Error(errorMsg);
         }
 
       } catch (backendError: any) {
         console.warn("Backend API unavailable, falling back to simulation.", backendError);
-        
-        // --- 错误处理与降级 ---
         addLog(`❌ 真实发送失败: ${backendError.message}`, 'error');
-        
-        if (backendError.message.includes("RESEND_API_KEY")) {
-            addLog("提示: 请在 Vercel 环境变量中配置 RESEND_API_KEY。", 'info');
-        }
-
-        // 仅当非配置错误时才演示
         addLog("正在切换至演示模式 (Simulated Mode)...", 'info');
         
         await new Promise(resolve => setTimeout(resolve, 1000));
-        
-        const mockPayload = {
-          recipients: recipients,
-          subject: `Daily Pulse - ${new Date().toLocaleDateString()}`,
-          content_json_length: JSON.stringify(data).length
-        };
-        console.log(">>> [MOCK] WOULD POST TO /api/digest:", mockPayload);
         addLog(`(模拟) 邮件已送达虚拟网关，收件人数: ${recipients.length}`, 'success');
       }
       
@@ -101,7 +82,6 @@ const App: React.FC = () => {
       console.error(error);
       setStatus(AppStatus.ERROR);
       
-      // FIX: Robust error message extraction to prevent [object Object]
       let msg = '未知错误';
       if (typeof error === 'string') {
           msg = error;
@@ -124,14 +104,12 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 text-gray-800 font-sans">
-      {/* Background decoration */}
       <div className="fixed inset-0 z-0 pointer-events-none opacity-50">
          <div className="absolute -top-24 -left-24 w-96 h-96 bg-blue-200 rounded-full mix-blend-multiply filter blur-3xl animate-blob"></div>
          <div className="absolute top-0 -right-4 w-72 h-72 bg-purple-200 rounded-full mix-blend-multiply filter blur-3xl animate-blob animation-delay-2000"></div>
       </div>
 
       <div className="relative z-10 container mx-auto px-4 py-8 h-screen flex flex-col">
-        {/* Header */}
         <header className="mb-6 flex items-center gap-3">
           <div className="bg-indigo-600 p-2 rounded-lg shadow-lg">
             <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -144,7 +122,6 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        {/* Content */}
         <main className="flex-1 min-h-0 flex flex-col justify-center">
           {status === AppStatus.CONFIG ? (
             <div className="flex justify-center items-center h-full">

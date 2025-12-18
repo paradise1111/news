@@ -16,9 +16,8 @@ export interface DigestData {
   health: DigestItem[];
 }
 
+// Removed apiKey and baseUrl to follow @google/genai security guidelines
 export interface AppConfig {
-  apiKey: string;
-  baseUrl: string; // Optional custom base URL
   model: string;
 }
 
