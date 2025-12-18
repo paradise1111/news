@@ -2,26 +2,19 @@
 import { AppConfig, DigestData, ModelOption, DigestItem } from "../types";
 import { DEFAULT_MODELS } from "../constants";
 
-/**
- * 基础 URL 处理：确保路径正确，不重复添加 /v1，适配代理地址
- */
 const normalizeBaseUrl = (url: string): string => {
   let clean = url.trim().replace(/\/+$/, '');
   if (!clean) return '';
-  // 如果输入的是顶级域名且不含 /v1，也不是官方 google 地址，则补全 /v1
   if (!clean.includes('/v1') && !clean.match(/googleapis\.com/)) {
     clean += '/v1';
   }
   return clean;
 };
 
-/**
- * 鲁棒的 JSON 提取器
- */
 const extractJson = (str: string): any => {
     if (typeof str !== 'string') return str;
     const text = str.trim();
-    if (!text) throw new Error("AI 返回内容为空");
+    if (!text) throw new Error("AI 响应内容完全为空，请检查模型可用性或降低安全过滤等级。");
 
     try { return JSON.parse(text); } catch (e) {}
 
@@ -37,21 +30,14 @@ const extractJson = (str: string): any => {
     
     if (start !== -1 && end !== -1 && end > start) {
         const potentialJson = text.substring(start, end + 1);
-        try {
-            return JSON.parse(potentialJson);
-        } catch (e) {
-            const sanitized = potentialJson
-                .replace(/,\s*([\]}])/g, '$1')
-                .replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
+        try { return JSON.parse(potentialJson); } catch (e) {
+            const sanitized = potentialJson.replace(/,\s*([\]}])/g, '$1').replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
             try { return JSON.parse(sanitized); } catch (e2) {}
         }
     }
-    throw new Error(`无法从响应中解析出 JSON 数据。原始内容: ${text.substring(0, 50)}...`);
+    throw new Error(`JSON 解析失败。原始内容开头: ${text.substring(0, 100)}`);
 };
 
-/**
- * 链接有效性校验
- */
 const validateUrl = async (url: string): Promise<boolean> => {
     if (!url || !url.startsWith('http')) return false;
     try {
@@ -61,20 +47,13 @@ const validateUrl = async (url: string): Promise<boolean> => {
             body: JSON.stringify({
                 targetUrl: url,
                 method: 'GET',
-                headers: { 
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' 
-                }
+                headers: { 'User-Agent': 'Mozilla/5.0' }
             }),
         });
         return response.ok;
-    } catch {
-        return false;
-    }
+    } catch { return false; }
 };
 
-/**
- * 通用请求函数
- */
 const openAIFetch = async (
   baseUrl: string,
   apiKey: string,
@@ -95,29 +74,34 @@ const openAIFetch = async (
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
       },
-      body 
+      body: {
+          ...body,
+          // 尝试降低安全过滤（仅部分中转支持）
+          safetySettings: [
+              { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+              { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+          ]
+      } 
     }),
   });
 
   if (!response.ok) {
-    const errData = await response.json();
-    // 这里的错误通常来自代理服务器自身
-    const msg = typeof errData.error === 'object' 
-      ? (errData.error.message || JSON.stringify(errData.error)) 
-      : (errData.error || response.statusText);
-    throw new Error(msg);
+    const errData = await response.json().catch(() => ({ error: response.statusText }));
+    throw new Error(errData.error?.message || errData.error || `HTTP ${response.status}`);
   }
 
   const contentType = response.headers.get('content-type') || '';
   
   if (contentType.includes('text/event-stream')) {
       const reader = response.body?.getReader();
-      if (!reader) throw new Error("流读取器初始化失败");
+      if (!reader) throw new Error("无法读取流数据");
       
       const decoder = new TextDecoder();
       let fullContent = '';
       let hasError = false;
-      let errorMessage = '';
+      let lastErrorMessage = '';
 
       while (true) {
           const { done, value } = await reader.read();
@@ -139,36 +123,41 @@ const openAIFetch = async (
                   try {
                       const parsed = JSON.parse(dataStr);
                       if (hasError) {
-                          // 如果 parsed.error 还是一个字符串化的 JSON，尝试再次解析
-                          let detail = parsed.error;
-                          try {
-                              const inner = JSON.parse(detail);
-                              detail = inner.error?.message || inner.message || detail;
-                          } catch {}
-                          errorMessage = detail;
+                          lastErrorMessage = parsed.error?.message || parsed.error || lastErrorMessage;
                       } else {
-                          fullContent += (parsed.choices?.[0]?.delta?.content || '');
+                          // 兼容多种格式：delta.content, delta.text, 或者直接 message.content
+                          const content = parsed.choices?.[0]?.delta?.content 
+                                       || parsed.choices?.[0]?.delta?.text
+                                       || parsed.choices?.[0]?.text 
+                                       || "";
+                          fullContent += content;
                       }
                   } catch (e) {
-                      if (!hasError) fullContent += dataStr;
+                      // 如果 JSON 解析失败，可能是原始字符串（部分非标代理）
+                      if (!hasError && !dataStr.startsWith('{')) fullContent += dataStr;
                   }
               }
           }
       }
 
-      if (hasError) throw new Error(errorMessage || "上游模型调用失败");
+      if (hasError) throw new Error(lastErrorMessage || "流式传输中断");
+      if (!fullContent) {
+          // 如果流结束了但内容为空，可能是安全策略拦截了所有输出
+          throw new Error("模型响应为空。这通常是因为触发了 API 的安全审核策略，或者中转站配置有误。请尝试更换模型或修改 Prompt。");
+      }
       return fullContent;
   } 
   
-  return await response.json();
+  const result = await response.json();
+  return result.choices?.[0]?.message?.content || result;
 };
 
 export const checkModelAvailability = async (apiKey: string, baseUrl: string, modelId: string) => {
   const start = Date.now();
   try {
-    await openAIFetch(baseUrl, apiKey, '/chat/completions', {
+    const res = await openAIFetch(baseUrl, apiKey, '/chat/completions', {
       model: modelId,
-      messages: [{ role: "user", content: "ping" }],
+      messages: [{ role: "user", content: "hi" }],
       max_tokens: 5,
       stream: false
     });
@@ -197,29 +186,33 @@ export const generateDailyDigest = async (config: AppConfig, onLog: (msg: string
   onLog(`[第一步] 正在请求模型发现资讯链接...`);
   
   const discoveryPrompt = `
-    你是一个专业的新闻检索助手。请提供 ${todayStr} 发生的全球 10 条社会热点和 10 条健康资讯。
-    必须包含真实的原始 URL，严禁捏造。
-    仅输出 JSON 格式：{"candidates": [{"title": "标题", "url": "URL", "category": "social" | "health"}]}
+    你是一个专业的新闻编辑。今天是 ${todayStr}。
+    请搜索并列举今天全球发生的 10 条真实社会新闻和 10 条真实健康医疗进展。
+    
+    规则：
+    1. 必须提供真实的原始长链接 (URL)，禁止缩写链接或伪造链接。
+    2. 链接必须是可以直接访问的新闻正文页。
+    3. 如果话题敏感，请选择较温和但真实的新闻。
+    4. 严格以 JSON 格式输出：{"candidates": [{"title": "新闻标题", "url": "https://...", "category": "social"}]}
   `;
 
-  // 彻底移除 tools，防止代理渠道不支持导致的 400 错误
   const discoveryRaw = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', {
     model: config.model,
     messages: [
-        { role: "user", content: `System: 你是一个只输出 JSON 数据的机器人。\n\nUser: ${discoveryPrompt}` }
+        { role: "user", content: `System: 你是一个只输出 JSON 且严格遵循新闻真实性的机器人。\n\nUser: ${discoveryPrompt}` }
     ],
     stream: true,
-    max_tokens: 3000,
-    temperature: 0.1
+    max_tokens: 4000,
+    temperature: 0.3
   });
 
   const discoveryData = extractJson(discoveryRaw);
   const candidates = (discoveryData.candidates || []) as { title: string, url: string, category: string }[];
 
-  if (candidates.length === 0) throw new Error("未获取到有效的候选资讯链接。");
+  if (candidates.length === 0) throw new Error("模型未找到任何资讯链接，请尝试刷新重试。");
 
   // --- 阶段 2: 验证 ---
-  onLog(`[检查点] 正在物理验证 ${candidates.length} 条链接的连通性...`);
+  onLog(`[检查点] 正在物理验证 ${candidates.length} 条链接...`);
   const validatedItems: { title: string, url: string, category: string }[] = [];
   
   const results = await Promise.all(candidates.map(async (item) => {
@@ -230,33 +223,34 @@ export const generateDailyDigest = async (config: AppConfig, onLog: (msg: string
   results.forEach(r => { if(r) validatedItems.push(r); });
 
   if (validatedItems.length === 0) {
-      throw new Error("当前模型提供的链接均为幻觉链接或不可访问。建议更换更高级的模型（如 Pro）或检查 API 渠道。");
+      throw new Error(`AI 提供的链接 (${candidates.length}个) 均不可访问或为虚假链接。请检查 API 渠道质量或更换 Pro 模型。`);
   }
-  onLog(`校验完成：${validatedItems.length} 条链接真实可用。`);
+  onLog(`成功验证：${validatedItems.length} 条真实有效链接。`);
 
   // --- 阶段 3: 精编 ---
-  onLog(`[第二步] 正在基于真实链接生成精编摘要...`);
+  onLog(`[第二步] 正在基于验证成功的 ${validatedItems.length} 条链接生成摘要...`);
   const elaborationPrompt = `
-    请根据以下真实资讯源，编写今日 Daily Digest。
+    请根据以下验证成功的真实内容源，编写今日 Daily Digest 报表。
     
-    内容源：
+    源链接列表：
     ${validatedItems.map((v, i) => `${i+1}. [${v.category}] ${v.title} | ${v.url}`).join('\n')}
 
     要求：
-    - 中文摘要 summary_cn 需详细（150字）。
-    - 包含 ai_score 和 ai_score_reason。
-    - 健康类包含 xhs_titles。
+    - summary_cn: 详细的中文总结，150字左右，客观专业。
+    - summary_en: 简短的英文总结。
+    - ai_score: 价值评分 (0-100)。
+    - xhs_titles: 针对健康资讯，提供 3 个小红书风格的爆款标题。
     - 仅输出 JSON：{"social": [...], "health": [...]}
   `;
 
   const elaborationRaw = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', {
     model: config.model,
     messages: [
-        { role: "user", content: `System: 你是一个专业日报主编。请严格输出 JSON 数据。\n\nUser: ${elaborationPrompt}` }
+        { role: "user", content: `System: 你是一个金牌日报主编，请严格以 JSON 形式输出内容。\n\nUser: ${elaborationPrompt}` }
     ],
     stream: true,
-    max_tokens: 5000,
-    temperature: 0.7
+    max_tokens: 6000,
+    temperature: 0.6
   });
 
   return extractJson(elaborationRaw) as DigestData;
