@@ -30,12 +30,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing targetUrl parameter' }, { status: 400 });
     }
 
-    // 判断是否需要流式处理：只有 POST 请求且明确开启了 stream 模式
     const isStreamRequest = method?.toUpperCase() === 'POST' && body?.stream === true;
 
     if (!isStreamRequest) {
-      // --- 非流式普通请求 (GET /models 等) ---
-      console.log(`[Edge Proxy] Simple Fetch: ${targetUrl}`);
       const simpleRes = await fetch(targetUrl, {
         method: method || 'GET',
         headers: headers || {},
@@ -52,29 +49,20 @@ export async function POST(req: Request) {
       });
     }
 
-    // --- 流式请求 (Chat Completions) ---
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
-        controller.enqueue(encoder.encode(": start_stream\n\n"));
         
-        let intervalId: any = null;
         try {
-          console.log(`[Edge Proxy] Stream Fetching: ${targetUrl}`);
-          intervalId = setInterval(() => {
-             try { controller.enqueue(encoder.encode(": keep-alive\n\n")); } catch { /* ignore */ }
-          }, 5000);
-
           const upstreamRes = await fetch(targetUrl, {
             method: 'POST',
             headers: headers || {},
             body: JSON.stringify(body),
           });
 
-          if (intervalId) clearInterval(intervalId);
-
           if (!upstreamRes.ok) {
             const errText = await upstreamRes.text();
+            // 将上游的错误包装成 SSE 错误事件发送
             controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: errText })}\n\n`));
             controller.close();
             return;
@@ -89,7 +77,6 @@ export async function POST(req: Request) {
               }
           }
         } catch (err: any) {
-           if (intervalId) clearInterval(intervalId);
            controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: err.message })}\n\n`));
         } finally {
           controller.close();
@@ -107,7 +94,6 @@ export async function POST(req: Request) {
     });
 
   } catch (error: any) {
-    console.error('[Proxy Init Error]', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

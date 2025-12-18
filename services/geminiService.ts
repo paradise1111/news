@@ -3,12 +3,12 @@ import { AppConfig, DigestData, ModelOption, DigestItem } from "../types";
 import { DEFAULT_MODELS } from "../constants";
 
 /**
- * 基础 URL 处理：确保不重复补全，且兼容性更高
+ * 基础 URL 处理：确保路径正确，不重复添加 /v1，适配代理地址
  */
 const normalizeBaseUrl = (url: string): string => {
   let clean = url.trim().replace(/\/+$/, '');
   if (!clean) return '';
-  // 如果不包含 v1 且不是官方地址，则补全
+  // 如果输入的是顶级域名且不含 /v1，也不是官方 google 地址，则补全 /v1
   if (!clean.includes('/v1') && !clean.match(/googleapis\.com/)) {
     clean += '/v1';
   }
@@ -16,12 +16,12 @@ const normalizeBaseUrl = (url: string): string => {
 };
 
 /**
- * 通用 JSON 提取器
+ * 鲁棒的 JSON 提取器
  */
 const extractJson = (str: string): any => {
     if (typeof str !== 'string') return str;
     const text = str.trim();
-    if (!text) throw new Error("AI 返回了空内容。");
+    if (!text) throw new Error("AI 返回内容为空");
 
     try { return JSON.parse(text); } catch (e) {}
 
@@ -46,7 +46,7 @@ const extractJson = (str: string): any => {
             try { return JSON.parse(sanitized); } catch (e2) {}
         }
     }
-    throw new Error(`无法解析 JSON 数据。原始内容片段: ${text.substring(0, 100)}`);
+    throw new Error(`无法从响应中解析出 JSON 数据。原始内容: ${text.substring(0, 50)}...`);
 };
 
 /**
@@ -73,7 +73,7 @@ const validateUrl = async (url: string): Promise<boolean> => {
 };
 
 /**
- * 核心调用函数：修复了 SSE 错误提取逻辑
+ * 通用请求函数
  */
 const openAIFetch = async (
   baseUrl: string,
@@ -101,7 +101,10 @@ const openAIFetch = async (
 
   if (!response.ok) {
     const errData = await response.json();
-    const msg = typeof errData.error === 'object' ? JSON.stringify(errData.error) : (errData.error || response.statusText);
+    // 这里的错误通常来自代理服务器自身
+    const msg = typeof errData.error === 'object' 
+      ? (errData.error.message || JSON.stringify(errData.error)) 
+      : (errData.error || response.statusText);
     throw new Error(msg);
   }
 
@@ -109,7 +112,7 @@ const openAIFetch = async (
   
   if (contentType.includes('text/event-stream')) {
       const reader = response.body?.getReader();
-      if (!reader) throw new Error("无法建立数据流连接");
+      if (!reader) throw new Error("流读取器初始化失败");
       
       const decoder = new TextDecoder();
       let fullContent = '';
@@ -136,11 +139,13 @@ const openAIFetch = async (
                   try {
                       const parsed = JSON.parse(dataStr);
                       if (hasError) {
-                          // 修复：处理嵌套的错误对象
-                          const rawError = parsed.error;
-                          errorMessage = typeof rawError === 'object' 
-                            ? (rawError.message || JSON.stringify(rawError)) 
-                            : (rawError || errorMessage);
+                          // 如果 parsed.error 还是一个字符串化的 JSON，尝试再次解析
+                          let detail = parsed.error;
+                          try {
+                              const inner = JSON.parse(detail);
+                              detail = inner.error?.message || inner.message || detail;
+                          } catch {}
+                          errorMessage = detail;
                       } else {
                           fullContent += (parsed.choices?.[0]?.delta?.content || '');
                       }
@@ -151,7 +156,7 @@ const openAIFetch = async (
           }
       }
 
-      if (hasError) throw new Error(errorMessage || "AI 渠道返回错误");
+      if (hasError) throw new Error(errorMessage || "上游模型调用失败");
       return fullContent;
   } 
   
@@ -163,7 +168,7 @@ export const checkModelAvailability = async (apiKey: string, baseUrl: string, mo
   try {
     await openAIFetch(baseUrl, apiKey, '/chat/completions', {
       model: modelId,
-      messages: [{ role: "user", content: "hi" }],
+      messages: [{ role: "user", content: "ping" }],
       max_tokens: 5,
       stream: false
     });
@@ -181,7 +186,6 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
     }
     return [];
   } catch (err: any) {
-    console.error("Fetch models error:", err);
     throw err;
   }
 };
@@ -189,88 +193,69 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
 export const generateDailyDigest = async (config: AppConfig, onLog: (msg: string) => void): Promise<DigestData> => {
   const todayStr = new Date().toISOString().split('T')[0];
 
-  // --- 阶段 1: 发现 (Discovery) ---
-  onLog(`[第一步] 正在通过联网搜索发现资讯 (日期: ${todayStr})...`);
+  // --- 阶段 1: 发现 ---
+  onLog(`[第一步] 正在请求模型发现资讯链接...`);
   
   const discoveryPrompt = `
-    你是一个资讯检索专家。请检索 ${todayStr} 发生的全球重大社会新闻和健康资讯。
-    要求：
-    1. 找到 10 个“社会热点 (social)”和 10 个“健康生活 (health)”的真实链接。
-    2. 必须提供真实的原始深层 URL。
-    3. 严禁虚构。
-    4. 仅输出 JSON：{"candidates": [{"title": "标题", "url": "URL", "category": "social/health"}]}
+    你是一个专业的新闻检索助手。请提供 ${todayStr} 发生的全球 10 条社会热点和 10 条健康资讯。
+    必须包含真实的原始 URL，严禁捏造。
+    仅输出 JSON 格式：{"candidates": [{"title": "标题", "url": "URL", "category": "social" | "health"}]}
   `;
 
-  // 构造请求体，增加 googleSearch 尝试
-  const discoveryPayload: any = {
+  // 彻底移除 tools，防止代理渠道不支持导致的 400 错误
+  const discoveryRaw = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', {
     model: config.model,
     messages: [
-        { role: "user", content: `System: 你是一个只输出 JSON 的资讯检索机器人。严禁输出任何非 JSON 内容。\n\nUser: ${discoveryPrompt}` }
+        { role: "user", content: `System: 你是一个只输出 JSON 数据的机器人。\n\nUser: ${discoveryPrompt}` }
     ],
     stream: true,
     max_tokens: 3000,
-    temperature: 0.2
-  };
-
-  // 仅在模型名称包含 gemini 时尝试开启联网工具
-  if (config.model.toLowerCase().includes('gemini')) {
-    discoveryPayload.tools = [{ googleSearch: {} }];
-  }
-
-  let discoveryRaw;
-  try {
-      discoveryRaw = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', discoveryPayload);
-  } catch (err: any) {
-      if (err.message.includes('tool') || err.message.includes('400')) {
-          onLog("提示：当前代理渠道可能不支持 googleSearch 工具，正在尝试不带工具的普通模式...");
-          delete discoveryPayload.tools;
-          discoveryRaw = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', discoveryPayload);
-      } else {
-          throw err;
-      }
-  }
+    temperature: 0.1
+  });
 
   const discoveryData = extractJson(discoveryRaw);
   const candidates = (discoveryData.candidates || []) as { title: string, url: string, category: string }[];
 
-  if (candidates.length === 0) throw new Error("未能搜索到候选链接。");
+  if (candidates.length === 0) throw new Error("未获取到有效的候选资讯链接。");
 
-  // --- 阶段 2: 验证 (Validation) ---
-  onLog(`[检查点] 正在对 ${candidates.length} 条链接进行连通性测试...`);
+  // --- 阶段 2: 验证 ---
+  onLog(`[检查点] 正在物理验证 ${candidates.length} 条链接的连通性...`);
   const validatedItems: { title: string, url: string, category: string }[] = [];
   
-  // 并行验证
-  const validationResults = await Promise.all(candidates.map(async (item) => {
-      const isValid = await validateUrl(item.url);
-      return isValid ? item : null;
+  const results = await Promise.all(candidates.map(async (item) => {
+      const ok = await validateUrl(item.url);
+      return ok ? item : null;
   }));
 
-  validationResults.forEach(res => { if(res) validatedItems.push(res); });
+  results.forEach(r => { if(r) validatedItems.push(r); });
 
   if (validatedItems.length === 0) {
-      throw new Error("AI 提供的链接经校验全部失效。这通常是模型产生了“幻觉”。请换用更高阶的模型（如 Pro）或重试。");
+      throw new Error("当前模型提供的链接均为幻觉链接或不可访问。建议更换更高级的模型（如 Pro）或检查 API 渠道。");
   }
-  onLog(`校验完成：${validatedItems.length} 条链接真实有效。`);
+  onLog(`校验完成：${validatedItems.length} 条链接真实可用。`);
 
-  // --- 阶段 3: 精编 (Elaboration) ---
-  onLog(`[第二步] 正在精编 ${validatedItems.length} 条资讯的深度摘要...`);
+  // --- 阶段 3: 精编 ---
+  onLog(`[第二步] 正在基于真实链接生成精编摘要...`);
   const elaborationPrompt = `
-    基于以下真实链接，生成完整的 Daily Digest 日报 JSON。
+    请根据以下真实资讯源，编写今日 Daily Digest。
     
-    链接列表：
-    ${validatedItems.map((v, i) => `${i+1}. [${v.category}] ${v.title} - ${v.url}`).join('\n')}
+    内容源：
+    ${validatedItems.map((v, i) => `${i+1}. [${v.category}] ${v.title} | ${v.url}`).join('\n')}
 
-    每条资讯要求包含：title, summary_cn, summary_en, source_url, ai_score, ai_score_reason, tags, xhs_titles(仅限健康类)。
-    仅输出 JSON：{"social": [...], "health": [...]}
+    要求：
+    - 中文摘要 summary_cn 需详细（150字）。
+    - 包含 ai_score 和 ai_score_reason。
+    - 健康类包含 xhs_titles。
+    - 仅输出 JSON：{"social": [...], "health": [...]}
   `;
 
   const elaborationRaw = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', {
     model: config.model,
     messages: [
-        { role: "user", content: `System: 你是一个专业日报主编，请严格输出 JSON。\n\nUser: ${elaborationPrompt}` }
+        { role: "user", content: `System: 你是一个专业日报主编。请严格输出 JSON 数据。\n\nUser: ${elaborationPrompt}` }
     ],
     stream: true,
-    max_tokens: 6000,
+    max_tokens: 5000,
     temperature: 0.7
   });
 
