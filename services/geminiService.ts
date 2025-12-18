@@ -11,38 +11,39 @@ const normalizeBaseUrl = (url: string): string => {
   return cleaned;
 };
 
-// Advanced JSON Extractor that handles nested objects and preamble text
+/**
+ * 极强容错的 JSON 提取器
+ */
 const extractJson = (str: string): any => {
-    // 1. Try direct parse
-    try {
-        return JSON.parse(str.trim());
-    } catch (e) {}
+    const text = str.trim();
+    if (!text) throw new Error("AI 返回了空响应。");
 
-    // 2. Remove markdown code blocks
-    let cleaned = str.replace(/```json/g, '').replace(/```/g, '').trim();
-    try {
-        return JSON.parse(cleaned);
-    } catch (e) {}
+    try { return JSON.parse(text); } catch (e) {}
 
-    // 3. Find the largest JSON-like structure {}
-    const firstBrace = cleaned.indexOf('{');
-    const lastBrace = cleaned.lastIndexOf('}');
+    let cleaned = text
+        .replace(/^[\s\S]*?```json/g, '')
+        .replace(/```[\s\S]*?$/g, '')
+        .trim();
     
-    if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-        const potentialJson = cleaned.substring(firstBrace, lastBrace + 1);
+    try { return JSON.parse(cleaned); } catch (e) {}
+
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    
+    if (start !== -1 && end !== -1 && end > start) {
+        const potentialJson = text.substring(start, end + 1);
         try {
             return JSON.parse(potentialJson);
         } catch (e) {
-            // 4. Extreme fallback: Replace newlines and try to fix common trailing comma errors
-            const fixedJson = potentialJson
-                .replace(/,\s*([\]}])/g, '$1'); // Remove trailing commas
-            try {
-                return JSON.parse(fixedJson);
-            } catch (e2) {}
+            const sanitized = potentialJson
+                .replace(/,\s*([\]}])/g, '$1')
+                .replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
+            try { return JSON.parse(sanitized); } catch (e2) {}
         }
     }
     
-    throw new Error("Could not parse JSON from AI response.");
+    const snippet = text.length > 150 ? text.substring(0, 150) + "..." : text;
+    throw new Error(`JSON 解析失败。模型输出内容不符合格式。摘要: ${snippet}`);
 };
 
 const openAIFetch = async (
@@ -78,13 +79,21 @@ const openAIFetch = async (
 
     if (!response.ok) {
        const errorText = await response.text();
-       throw new Error(`Proxy Error (${response.status}): ${errorText}`);
+       // 增强错误解析：尝试解析代理返回的 JSON 错误
+       try {
+           const errJson = JSON.parse(errorText);
+           if (errJson.error?.message) throw new Error(errJson.error.message);
+           if (errJson.error?.type) throw new Error(`[Proxy Error] ${errJson.error.type}: ${errJson.error.code || ''}`);
+       } catch (e: any) {
+           if (e.message.includes('[Proxy Error]')) throw e;
+       }
+       throw new Error(`上游连接失败 (${response.status}): ${errorText.substring(0, 100)}`);
     }
 
     const contentType = response.headers.get('content-type');
     if (contentType && contentType.includes('text/event-stream')) {
         const reader = response.body?.getReader();
-        if (!reader) throw new Error("Stream not supported");
+        if (!reader) throw new Error("无法读取流响应");
         
         const decoder = new TextDecoder();
         let buffer = '';
@@ -110,30 +119,31 @@ const openAIFetch = async (
                     const dataContent = trimmed.substring(6);
                     if (dataContent === '[DONE]') continue;
                     
-                    if (hasError) {
-                        errorMessage = dataContent;
-                    } else {
-                        try {
-                            const parsed = JSON.parse(dataContent);
-                            // Handle both streaming delta and non-streaming fallback from proxy
-                            if (parsed.choices?.[0]?.delta?.content) {
-                                fullContent += parsed.choices[0].delta.content;
-                            } else if (typeof parsed === 'string') {
-                                fullContent = parsed; // Non-streaming fallback
-                            } else if (parsed.choices?.[0]?.message?.content) {
-                                fullContent = parsed.choices[0].message.content;
-                            }
-                        } catch (e) {}
+                    try {
+                        const parsed = JSON.parse(dataContent);
+                        if (hasError) {
+                            errorMessage += (parsed.error?.message || dataContent);
+                        } else {
+                            const delta = parsed.choices?.[0]?.delta?.content;
+                            const message = parsed.choices?.[0]?.message?.content;
+                            if (delta) fullContent += delta;
+                            else if (message) fullContent += message;
+                        }
+                    } catch (e) {
+                        if (!hasError) fullContent += dataContent;
                     }
                 }
             }
         }
 
-        if (hasError) throw new Error(errorMessage || "Stream error");
+        if (hasError) throw new Error(errorMessage || "AI 生成过程中发生错误");
         return extractJson(fullContent);
     } 
     
     const directJson = await response.json();
+    if (directJson.choices?.[0]?.message?.content) {
+        return extractJson(directJson.choices[0].message.content);
+    }
     return directJson;
 
   } catch (error: any) {
@@ -170,55 +180,61 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
 };
 
 export const generateDailyDigest = async (config: AppConfig, onLog: (msg: string) => void): Promise<DigestData> => {
-  onLog(`正在启动 (模型: ${config.model})...`);
+  onLog(`正在尝试连接 (模型: ${config.model})...`);
+
+  // 判断是否使用官方模型。如果是别名模型，则倾向于关闭 tools 以提高兼容性。
+  const isOfficialGemini = config.model.toLowerCase().includes('gemini-') && !config.model.includes('-'); 
+  // 实际上大部分中转对带汉字或前缀的模型名，处理 tools 都会报错。
+  const useTools = !config.model.includes('花之悦') && !config.model.includes('tavo');
 
   const todayStr = new Date().toISOString().split('T')[0];
   const prompt = `
-    You are a professional News Editor.
-    Today's Date: ${todayStr}.
-    
-    ### REQUIREMENTS
-    1. **QUANTITY**: Output EXACTLY 6 to 10 items for "social" AND 6 to 10 items for "health". Total 12-20 items.
-    2. **TOPICS**: Only high-impact, trending, or breaking news from the last 24-48 hours.
-    3. **LINKS (CRITICAL)**: 
-       - Every link MUST be a direct, working URL to a news article.
-       - NO 404s. Do not invent slugs.
-       - If you cannot verify a direct URL, you MUST use a Google Search URL: "https://www.google.com/search?q=[Topic+Keywords]" as the source_url.
-    4. **SUMMARIES**: 
-       - summary_cn: Professional, engaging Chinese summary (approx 80-100 chars).
-       - summary_en: One concise English sentence.
-    
-    ### FORMAT (JSON ONLY)
-    {
-      "social": [ { "title": "...", "summary_en": "...", "summary_cn": "...", "source_url": "...", "source_name": "...", "ai_score": 90, "ai_score_reason": "...", "tags": ["..."] } ],
-      "health": [ { "title": "...", "xhs_titles": ["标题1", "标题2", "标题3"], ... } ]
-    }
+    Generate a JSON news digest for ${todayStr}.
+    Format: { "social": [...], "health": [...] }
+    Requirements:
+    - 6-10 items per section.
+    - summary_cn: Chinese, summary_en: English.
+    - Valid source_url (use google search link if needed).
+    - ai_score (0-100) and ai_score_reason (Chinese).
   `;
 
   const payload: any = {
     model: config.model,
     messages: [
-        { role: "system", content: "You strictly output JSON. You prioritize news from reliable sources. You ensure URLs are reachable or use Google Search fallback to avoid 404." },
+        { role: "system", content: "You are a JSON API. Output raw JSON only. NO conversational text." },
         { role: "user", content: prompt }
     ],
     stream: true,
     max_tokens: 4000,
-    tools: config.model.includes('deepseek') ? undefined : [{ googleSearch: {} }],
-    response_format: { type: "json_object" }
+    temperature: 0.7,
+    // 如果是自定义模型，尝试不发送 response_format 和 tools 以规避代理商报错
+    response_format: useTools ? { type: "json_object" } : undefined
   };
 
+  if (useTools) {
+      payload.tools = [{ googleSearch: {} }];
+      onLog("启用搜索插件增强内容质量...");
+  } else {
+      onLog("检测到非标模型别名，已进入‘高兼容性模式’（禁用搜索插件）...");
+  }
+
   try {
-    onLog("正在搜索并生成日报内容 (严控 6-10 条)...");
+    onLog("正在获取资讯并生成内容...");
     const data = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
-    onLog("数据生成成功，开始校验格式...");
     
-    if (!data.social || !data.health) {
-        throw new Error("Received partial data from AI.");
+    let finalData = data;
+    if (data.choices?.[0]?.message?.content) {
+        finalData = extractJson(data.choices[0].message.content);
+    }
+    
+    if (!finalData.social || !finalData.health) {
+        throw new Error("AI 返回数据格式不完整。");
     }
 
-    return data as DigestData;
+    return finalData as DigestData;
   } catch (error: any) {
-    onLog(`错误: ${error.message}`);
+    // 如果带 tools 报错，且这是第一次尝试，可以尝试自动重试不带 tools 的版本（可选）
+    onLog(`请求失败: ${error.message}`);
     throw error;
   }
 };
