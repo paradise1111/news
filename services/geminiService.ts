@@ -19,13 +19,16 @@ const extractJson = (str: any): any => {
     const text = str.trim();
     if (!text) throw new Error("AI 响应内容为空。");
 
+    // 尝试直接解析
     try { return JSON.parse(text); } catch (e) {}
 
+    // 尝试 Markdown 提取
     const jsonMatch = text.match(/```json\s*([\s\S]*?)\s*```/) || text.match(/```\s*([\s\S]*?)\s*```/);
     if (jsonMatch && jsonMatch[1]) {
         try { return JSON.parse(jsonMatch[1].trim()); } catch (e) {}
     }
 
+    // 暴力搜索大括号
     const start = text.indexOf('{');
     const end = text.lastIndexOf('}');
     if (start !== -1 && end !== -1 && end > start) {
@@ -38,7 +41,7 @@ const extractJson = (str: any): any => {
         }
     }
     
-    throw new Error(`JSON 解析失败。请尝试换一个模型（如 Flash 版本）。`);
+    throw new Error(`JSON 解析失败。响应原文内容不足或格式错误。`);
 };
 
 const validateUrl = async (url: string): Promise<boolean> => {
@@ -58,7 +61,7 @@ const validateUrl = async (url: string): Promise<boolean> => {
 };
 
 /**
- * 通用请求方法：返回解析后的 JSON 对象或流式字符串
+ * 通用请求方法：支持流式保活
  */
 const openAIFetch = async (
   baseUrl: string,
@@ -68,7 +71,6 @@ const openAIFetch = async (
   method: string = 'POST'
 ) => {
   const normalizedBase = normalizeBaseUrl(baseUrl);
-  // 确保 endpoint 不带重复斜杠
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   const targetUrl = `${normalizedBase}${cleanEndpoint}`;
 
@@ -94,7 +96,7 @@ const openAIFetch = async (
 
   const contentType = response.headers.get('content-type') || '';
   
-  if (contentType.includes('text/event-stream')) {
+  if (contentType.includes('text/event-stream') || body?.stream === true) {
       const reader = response.body?.getReader();
       if (!reader) throw new Error("无法读取流数据");
       const decoder = new TextDecoder();
@@ -130,7 +132,6 @@ const openAIFetch = async (
       return fullContent;
   } 
   
-  // 非流式请求：直接返回 JSON 对象
   return await response.json();
 };
 
@@ -152,61 +153,64 @@ export const checkModelAvailability = async (apiKey: string, baseUrl: string, mo
 export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Promise<ModelOption[]> => {
   try {
     const res = await openAIFetch(baseUrl, apiKey, '/models', undefined, 'GET');
-    // 标准 OpenAI 响应在 data 字段中
     if (res && Array.isArray(res.data)) {
         return res.data.map((m: any) => ({ id: m.id, name: m.id, status: 'unknown' }));
     }
-    // 兼容某些直接返回数组的非标接口
     if (Array.isArray(res)) {
         return res.map((m: any) => ({ id: m?.id || m, name: m?.id || m, status: 'unknown' }));
     }
     return [];
   } catch (err: any) {
-    console.error("Fetch models failed:", err);
     throw err;
   }
 };
 
 export const generateDailyDigest = async (config: AppConfig, onLog: (msg: string) => void): Promise<DigestData> => {
   const todayStr = new Date().toISOString().split('T')[0];
-  onLog(`[第一步] 正在通过搜索寻找最新资讯...`);
   
-  const discoveryPrompt = `Date: ${todayStr}. Task: List 15 recent global news links. Output ONLY valid JSON: {"candidates": [{"title": "String", "url": "String", "category": "social"}]}`;
+  // 第一步：寻找资讯 (改为流式，防止 504)
+  onLog(`[第一步] 正在搜寻最新资讯 (使用流式传输以防超时)...`);
+  const discoveryPrompt = `Today is ${todayStr}. Task: Find 12 highly relevant news articles about AI breakthroughs, global economy, and longevity health. Output JSON ONLY: {"candidates": [{"title": "...", "url": "...", "category": "..."}]}`;
 
-  const discoveryRes = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', {
+  const discoveryRaw = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', {
     model: config.model,
     messages: [{ role: "user", content: discoveryPrompt }],
-    stream: false,
+    stream: true, // 关键：使用流式防止网关超时
     temperature: 0.1
-  });
+  }) as string;
 
-  // 处理非流式返回的对象
-  const discoveryRaw = discoveryRes.choices?.[0]?.message?.content || "";
   const discoveryData = extractJson(discoveryRaw);
   const candidates = (discoveryData.candidates || []) as { title: string, url: string, category: string }[];
-  if (candidates.length === 0) throw new Error("未能获取任何有效的资讯链接。");
+  if (candidates.length === 0) throw new Error("未能搜寻到有效资讯，请检查模型是否有搜索权限或更换模型。");
 
-  onLog(`正在验证 ${candidates.length} 条链接的有效性...`);
+  // 验证链接
+  onLog(`正在验证 ${candidates.length} 条资讯链接的连通性...`);
   const validatedItems: { title: string, url: string, category: string }[] = [];
-  const results = await Promise.all(candidates.map(async (item) => {
+  const results = await Promise.all(candidates.slice(0, 10).map(async (item) => {
       const ok = await validateUrl(item.url);
       return ok ? item : null;
   }));
   results.forEach(r => { if(r) validatedItems.push(r); });
 
-  if (validatedItems.length === 0) throw new Error("AI 生成的链接均无效。");
-  onLog(`成功验证 ${validatedItems.length} 条有效链接。`);
+  if (validatedItems.length === 0) throw new Error("模型生成的链接均为死链，请换一个更强的模型（如 Pro 版）。");
+  onLog(`成功获取 ${validatedItems.length} 条实时有效资讯。`);
 
-  onLog(`[第二步] 正在生成日报精编 (流式解析)...`);
-  const elaborationPrompt = `Create a daily digest JSON with social and health arrays. For each: {title, summary_cn, summary_en, ai_score, xhs_titles}. Use these links: ${validatedItems.map(v => v.url).join(', ')}`;
+  // 第二步：深度精编
+  onLog(`[第二步] 正在基于原文进行深度精编与翻译...`);
+  const elaborationPrompt = `Generate a daily digest JSON based on these links: ${validatedItems.map(v => v.url).join(', ')}. Format: {"social": [DigestItem], "health": [DigestItem]}. Each item: {title, summary_cn, summary_en, ai_score, ai_score_reason, xhs_titles: [3 strings], tags: [3 strings]}`;
 
   const elaborationRaw = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', {
     model: config.model,
     messages: [{ role: "user", content: elaborationPrompt }],
     stream: true,
-    temperature: 0.5
-  });
+    temperature: 0.3
+  }) as string;
 
-  // elaborationRaw 对于流式请求已经是拼接好的字符串
-  return extractJson(elaborationRaw) as DigestData;
+  const finalData = extractJson(elaborationRaw) as DigestData;
+  
+  // 补齐字段防止渲染崩溃
+  if (!finalData.social) finalData.social = [];
+  if (!finalData.health) finalData.health = [];
+  
+  return finalData;
 };
