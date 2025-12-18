@@ -14,10 +14,11 @@ const normalizeBaseUrl = (url: string): string => {
 const extractJson = (str: string): any => {
     if (typeof str !== 'string') return str;
     const text = str.trim();
-    if (!text) throw new Error("AI 响应内容完全为空。");
+    if (!text) throw new Error("AI 响应为空。");
 
     try { return JSON.parse(text); } catch (e) {}
 
+    // 处理带 Markdown 代码块的情况
     let cleaned = text
         .replace(/^[\s\S]*?```json/g, '')
         .replace(/```[\s\S]*?$/g, '')
@@ -30,12 +31,9 @@ const extractJson = (str: string): any => {
     
     if (start !== -1 && end !== -1 && end > start) {
         const potentialJson = text.substring(start, end + 1);
-        try { return JSON.parse(potentialJson); } catch (e) {
-            const sanitized = potentialJson.replace(/,\s*([\]}])/g, '$1').replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
-            try { return JSON.parse(sanitized); } catch (e2) {}
-        }
+        try { return JSON.parse(potentialJson); } catch (e) {}
     }
-    throw new Error(`JSON 解析失败。原始内容: ${text.substring(0, 100)}...`);
+    throw new Error(`JSON 解析失败: ${text.substring(0, 50)}...`);
 };
 
 const validateUrl = async (url: string): Promise<boolean> => {
@@ -64,29 +62,23 @@ const openAIFetch = async (
   const normalizedBase = normalizeBaseUrl(baseUrl);
   const targetUrl = endpoint.startsWith('http') ? endpoint : `${normalizedBase}${endpoint}`;
 
-  const isPost = method.toUpperCase() === 'POST';
-  // 关键：移除 safetySettings 以兼容 OpenAI 格式中转
-  const finalBody = isPost ? body : undefined;
-
   const response = await fetch('/api/proxy', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       targetUrl,
-      method,
+      method: method.toUpperCase(),
       headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
       },
-      body: finalBody 
+      body: body
     }),
   });
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({ error: response.statusText }));
-    // 优先抛出上游的详细错误
-    const msg = errData.error?.message || errData.error || `HTTP ${response.status}`;
-    throw new Error(msg);
+    throw new Error(errData.error?.message || errData.error || `HTTP ${response.status}`);
   }
 
   const contentType = response.headers.get('content-type') || '';
@@ -94,7 +86,6 @@ const openAIFetch = async (
   if (contentType.includes('text/event-stream')) {
       const reader = response.body?.getReader();
       if (!reader) throw new Error("无法读取流数据");
-      
       const decoder = new TextDecoder();
       let fullContent = '';
       let hasError = false;
@@ -103,45 +94,34 @@ const openAIFetch = async (
       while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          
           const chunk = decoder.decode(value, { stream: true });
           const lines = chunk.split('\n');
-
           for (const line of lines) {
               const trimmed = line.trim();
               if (!trimmed || trimmed.startsWith(':')) continue;
-
-              if (trimmed.startsWith('event: error')) {
-                  hasError = true;
-              } else if (trimmed.startsWith('data: ')) {
+              if (trimmed.startsWith('event: error')) { hasError = true; continue; }
+              if (trimmed.startsWith('data: ')) {
                   const dataStr = trimmed.substring(6);
                   if (dataStr === '[DONE]') continue;
-                  
                   try {
                       const parsed = JSON.parse(dataStr);
                       if (hasError) {
                           lastErrorMessage = parsed.error?.message || parsed.error || lastErrorMessage;
                       } else {
-                          const content = parsed.choices?.[0]?.delta?.content 
-                                       || parsed.choices?.[0]?.delta?.text
-                                       || parsed.choices?.[0]?.text 
-                                       || "";
+                          const content = parsed.choices?.[0]?.delta?.content || "";
                           fullContent += content;
                       }
-                  } catch (e) {
-                      if (!hasError && !dataStr.startsWith('{')) fullContent += dataStr;
-                  }
+                  } catch (e) {}
               }
           }
       }
-
       if (hasError) throw new Error(lastErrorMessage || "流式传输中断");
-      if (!fullContent) throw new Error("模型返回内容为空。");
       return fullContent;
   } 
   
   const result = await response.json();
-  return result.choices?.[0]?.message?.content || result;
+  // 兼容直接返回 content 或包裹在 choices 里的情况
+  return result.choices?.[0]?.message?.content || result.content || JSON.stringify(result);
 };
 
 export const checkModelAvailability = async (apiKey: string, baseUrl: string, modelId: string) => {
@@ -173,30 +153,25 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
 
 export const generateDailyDigest = async (config: AppConfig, onLog: (msg: string) => void): Promise<DigestData> => {
   const todayStr = new Date().toISOString().split('T')[0];
-  onLog(`[第一步] 正在请求模型发现资讯链接...`);
+  onLog(`[第一步] 正在获取资讯链接 (非流式)...`);
   
-  // 优化 Prompt：减少激进词汇，强调 JSON 格式
-  const discoveryPrompt = `
-    Role: News Editor. Date: ${todayStr}.
-    Task: Search for 10 global news and 10 health updates.
-    Requirements:
-    1. Provide REAL deep-links (not homepage).
-    2. Format as JSON ONLY: {"candidates": [{"title": "News Title", "url": "https://...", "category": "social"}]}
-  `;
+  const discoveryPrompt = `You are a news curator. Date: ${todayStr}. Task: Provide 10 news and 10 health links. 
+  Output format: {"candidates": [{"title": "Title", "url": "URL", "category": "social"}]}`;
 
   const discoveryRaw = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', {
     model: config.model,
     messages: [{ role: "user", content: discoveryPrompt }],
-    stream: true,
+    stream: false, // 改为非流式更稳定
+    response_format: { type: "json_object" }, // 强制 JSON
     max_tokens: 2000,
-    temperature: 0.3
+    temperature: 0.1
   });
 
   const discoveryData = extractJson(discoveryRaw);
   const candidates = (discoveryData.candidates || []) as { title: string, url: string, category: string }[];
-  if (candidates.length === 0) throw new Error("未找到有效资讯列表。");
+  if (candidates.length === 0) throw new Error("未获得资讯链接列表。");
 
-  onLog(`[检查点] 正在验证 ${candidates.length} 条链接...`);
+  onLog(`正在验证 ${candidates.length} 条链接的可访问性...`);
   const validatedItems: { title: string, url: string, category: string }[] = [];
   const results = await Promise.all(candidates.map(async (item) => {
       const ok = await validateUrl(item.url);
@@ -204,22 +179,19 @@ export const generateDailyDigest = async (config: AppConfig, onLog: (msg: string
   }));
   results.forEach(r => { if(r) validatedItems.push(r); });
 
-  if (validatedItems.length === 0) throw new Error("AI 提供的链接均为无效或无法访问。");
-  onLog(`成功验证 ${validatedItems.length} 条有效链接。`);
+  if (validatedItems.length === 0) throw new Error("AI 生成的链接均无法访问。");
+  onLog(`验证成功: ${validatedItems.length} 条链接。`);
 
-  onLog(`[第二步] 正在生成日报精编...`);
-  const elaborationPrompt = `
-    Analyze these links and create a report with summary_cn (150 chars), summary_en, ai_score, and xhs_titles.
-    Links: ${validatedItems.map(v => v.url).join(', ')}
-    Format: JSON.
-  `;
+  onLog(`[第二步] 正在分析内容并编写日报 (流式)...`);
+  const elaborationPrompt = `Create a digest in JSON format with social and health arrays. For each: {title, summary_cn(150 chars), summary_en, ai_score, ai_score_reason, xhs_titles}. Links: ${validatedItems.map(v => v.url).join(', ')}`;
 
   const elaborationRaw = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', {
     model: config.model,
     messages: [{ role: "user", content: elaborationPrompt }],
     stream: true,
-    max_tokens: 4000,
-    temperature: 0.6
+    response_format: { type: "json_object" },
+    max_tokens: 6000,
+    temperature: 0.5
   });
 
   return extractJson(elaborationRaw) as DigestData;
