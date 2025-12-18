@@ -2,11 +2,13 @@
 import { AppConfig, DigestData, ModelOption } from "../types";
 import { DEFAULT_MODELS } from "../constants";
 
-// Helper: Normalize Base URL
+// 更加灵活的 URL 处理
 const normalizeBaseUrl = (url: string): string => {
   let cleaned = url.trim().replace(/\/+$/, '');
-  if (!cleaned.endsWith('/v1')) {
-      return `${cleaned}/v1`;
+  if (!cleaned) return '';
+  // 仅在用户输入了域名但完全没有路径时尝试补全，否则尊重用户输入
+  if (!cleaned.includes('/') && !cleaned.startsWith('http')) {
+      return `https://${cleaned}/v1`;
   }
   return cleaned;
 };
@@ -15,11 +17,14 @@ const normalizeBaseUrl = (url: string): string => {
  * 极强容错的 JSON 提取器
  */
 const extractJson = (str: string): any => {
+    if (typeof str !== 'string') return str;
     const text = str.trim();
     if (!text) throw new Error("AI 返回了空响应。");
 
+    // 尝试直接解析
     try { return JSON.parse(text); } catch (e) {}
 
+    // 清理 Markdown
     let cleaned = text
         .replace(/^[\s\S]*?```json/g, '')
         .replace(/```[\s\S]*?$/g, '')
@@ -27,6 +32,7 @@ const extractJson = (str: string): any => {
     
     try { return JSON.parse(cleaned); } catch (e) {}
 
+    // 寻找 {} 结构
     const start = text.indexOf('{');
     const end = text.lastIndexOf('}');
     
@@ -42,8 +48,7 @@ const extractJson = (str: string): any => {
         }
     }
     
-    const snippet = text.length > 150 ? text.substring(0, 150) + "..." : text;
-    throw new Error(`JSON 解析失败。模型输出内容不符合格式。摘要: ${snippet}`);
+    throw new Error(`无法从输出中提取 JSON 数据。`);
 };
 
 const openAIFetch = async (
@@ -54,7 +59,7 @@ const openAIFetch = async (
   method: string = 'POST'
 ) => {
   const normalizedBase = normalizeBaseUrl(baseUrl);
-  const targetUrl = `${normalizedBase}${endpoint}`;
+  const targetUrl = endpoint.startsWith('http') ? endpoint : `${normalizedBase}${endpoint}`;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 180000); 
@@ -77,29 +82,17 @@ const openAIFetch = async (
 
     clearTimeout(timeoutId);
 
-    if (!response.ok) {
-       const errorText = await response.text();
-       // 增强错误解析：尝试解析代理返回的 JSON 错误
-       try {
-           const errJson = JSON.parse(errorText);
-           if (errJson.error?.message) throw new Error(errJson.error.message);
-           if (errJson.error?.type) throw new Error(`[Proxy Error] ${errJson.error.type}: ${errJson.error.code || ''}`);
-       } catch (e: any) {
-           if (e.message.includes('[Proxy Error]')) throw e;
-       }
-       throw new Error(`上游连接失败 (${response.status}): ${errorText.substring(0, 100)}`);
-    }
-
+    // 处理流式响应
     const contentType = response.headers.get('content-type');
     if (contentType && contentType.includes('text/event-stream')) {
         const reader = response.body?.getReader();
-        if (!reader) throw new Error("无法读取流响应");
+        if (!reader) throw new Error("Stream unsupported");
         
         const decoder = new TextDecoder();
         let buffer = '';
         let fullContent = '';
         let hasError = false;
-        let errorMessage = '';
+        let streamErrorMessage = '';
 
         while (true) {
             const { done, value } = await reader.read();
@@ -122,29 +115,37 @@ const openAIFetch = async (
                     try {
                         const parsed = JSON.parse(dataContent);
                         if (hasError) {
-                            errorMessage += (parsed.error?.message || dataContent);
+                            streamErrorMessage = parsed.error?.message || streamErrorMessage || dataContent;
                         } else {
-                            const delta = parsed.choices?.[0]?.delta?.content;
-                            const message = parsed.choices?.[0]?.message?.content;
-                            if (delta) fullContent += delta;
-                            else if (message) fullContent += message;
+                            // 兼容多种流格式
+                            const delta = parsed.choices?.[0]?.delta?.content || parsed.choices?.[0]?.text || '';
+                            fullContent += delta;
                         }
                     } catch (e) {
+                        // 非 JSON 数据直接累加
                         if (!hasError) fullContent += dataContent;
                     }
                 }
             }
         }
 
-        if (hasError) throw new Error(errorMessage || "AI 生成过程中发生错误");
-        return extractJson(fullContent);
+        if (hasError) throw new Error(streamErrorMessage || "流式传输异常");
+        return fullContent; // 注意：流式模式下这里返回的是字符串
     } 
     
-    const directJson = await response.json();
-    if (directJson.choices?.[0]?.message?.content) {
-        return extractJson(directJson.choices[0].message.content);
+    // 处理普通 JSON 响应
+    const result = await response.json();
+    
+    // 关键修复：检查即使状态码为 200 时的内部错误
+    if (result.error) {
+        throw new Error(result.error.message || result.error.type || JSON.stringify(result.error));
     }
-    return directJson;
+
+    if (!response.ok) {
+        throw new Error(`请求失败 (${response.status})`);
+    }
+
+    return result;
 
   } catch (error: any) {
       clearTimeout(timeoutId);
@@ -155,13 +156,17 @@ const openAIFetch = async (
 export const checkModelAvailability = async (apiKey: string, baseUrl: string, modelId: string) => {
   const start = Date.now();
   try {
-    await openAIFetch(baseUrl, apiKey, '/chat/completions', {
+    const res = await openAIFetch(baseUrl, apiKey, '/chat/completions', {
       model: modelId,
       messages: [{ role: "user", content: "hi" }],
       max_tokens: 5,
       stream: false
     });
-    return { available: true, latency: Date.now() - start };
+    // 确保返回了预期的 OpenAI 结构
+    if (res.choices || res.id) {
+        return { available: true, latency: Date.now() - start };
+    }
+    throw new Error("响应格式异常");
   } catch (error: any) {
     return { available: false, error: error.message };
   }
@@ -180,61 +185,45 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
 };
 
 export const generateDailyDigest = async (config: AppConfig, onLog: (msg: string) => void): Promise<DigestData> => {
-  onLog(`正在尝试连接 (模型: ${config.model})...`);
+  onLog(`正在启动 (模型: ${config.model})...`);
 
-  // 判断是否使用官方模型。如果是别名模型，则倾向于关闭 tools 以提高兼容性。
-  const isOfficialGemini = config.model.toLowerCase().includes('gemini-') && !config.model.includes('-'); 
-  // 实际上大部分中转对带汉字或前缀的模型名，处理 tools 都会报错。
-  const useTools = !config.model.includes('花之悦') && !config.model.includes('tavo');
+  // 针对已知容易报错的别名模型禁用 search
+  const isCustomModel = config.model.includes('花之悦') || config.model.includes('tavo');
 
   const todayStr = new Date().toISOString().split('T')[0];
-  const prompt = `
-    Generate a JSON news digest for ${todayStr}.
-    Format: { "social": [...], "health": [...] }
-    Requirements:
-    - 6-10 items per section.
-    - summary_cn: Chinese, summary_en: English.
-    - Valid source_url (use google search link if needed).
-    - ai_score (0-100) and ai_score_reason (Chinese).
-  `;
+  const prompt = `Generate a JSON news digest for ${todayStr}. Format: {"social":[], "health":[]}`;
 
   const payload: any = {
     model: config.model,
     messages: [
-        { role: "system", content: "You are a JSON API. Output raw JSON only. NO conversational text." },
+        { role: "system", content: "You are a JSON API. Output raw JSON only." },
         { role: "user", content: prompt }
     ],
     stream: true,
     max_tokens: 4000,
-    temperature: 0.7,
-    // 如果是自定义模型，尝试不发送 response_format 和 tools 以规避代理商报错
-    response_format: useTools ? { type: "json_object" } : undefined
+    temperature: 0.7
   };
 
-  if (useTools) {
+  // 仅在非自定义模型上尝试开启 googleSearch
+  if (!isCustomModel) {
       payload.tools = [{ googleSearch: {} }];
-      onLog("启用搜索插件增强内容质量...");
-  } else {
-      onLog("检测到非标模型别名，已进入‘高兼容性模式’（禁用搜索插件）...");
+      payload.response_format = { type: "json_object" };
   }
 
   try {
-    onLog("正在获取资讯并生成内容...");
-    const data = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
+    onLog("正在获取资讯...");
+    const rawContent = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
     
-    let finalData = data;
-    if (data.choices?.[0]?.message?.content) {
-        finalData = extractJson(data.choices[0].message.content);
-    }
+    // openAIFetch 在流模式下返回的是字符串，需要解析
+    const finalData = extractJson(rawContent);
     
     if (!finalData.social || !finalData.health) {
-        throw new Error("AI 返回数据格式不完整。");
+        throw new Error("AI 返回数据不完整。");
     }
 
     return finalData as DigestData;
   } catch (error: any) {
-    // 如果带 tools 报错，且这是第一次尝试，可以尝试自动重试不带 tools 的版本（可选）
-    onLog(`请求失败: ${error.message}`);
+    onLog(`任务失败: ${error.message}`);
     throw error;
   }
 };
