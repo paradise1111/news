@@ -14,7 +14,7 @@ const normalizeBaseUrl = (url: string): string => {
 const extractJson = (str: string): any => {
     if (typeof str !== 'string') return str;
     const text = str.trim();
-    if (!text) throw new Error("AI 响应内容完全为空，请检查模型可用性或降低安全过滤等级。");
+    if (!text) throw new Error("AI 响应内容完全为空。");
 
     try { return JSON.parse(text); } catch (e) {}
 
@@ -35,7 +35,7 @@ const extractJson = (str: string): any => {
             try { return JSON.parse(sanitized); } catch (e2) {}
         }
     }
-    throw new Error(`JSON 解析失败。原始内容开头: ${text.substring(0, 100)}`);
+    throw new Error(`JSON 解析失败。原始内容: ${text.substring(0, 100)}...`);
 };
 
 const validateUrl = async (url: string): Promise<boolean> => {
@@ -64,24 +64,16 @@ const openAIFetch = async (
   const normalizedBase = normalizeBaseUrl(baseUrl);
   const targetUrl = endpoint.startsWith('http') ? endpoint : `${normalizedBase}${endpoint}`;
 
-  // 关键修复：仅在非 GET/HEAD 请求时构造 body
   const isPost = method.toUpperCase() === 'POST';
-  const finalBody = isPost ? {
-      ...body,
-      safetySettings: [
-          { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-          { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-          { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-          { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
-      ]
-  } : undefined;
+  // 关键：移除 safetySettings 以兼容 OpenAI 格式中转
+  const finalBody = isPost ? body : undefined;
 
   const response = await fetch('/api/proxy', {
-    method: 'POST', // 代理始终用 POST 通讯
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       targetUrl,
-      method, // 这里传递给上游的真实方法（GET 或 POST）
+      method,
       headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${apiKey}`
@@ -92,7 +84,9 @@ const openAIFetch = async (
 
   if (!response.ok) {
     const errData = await response.json().catch(() => ({ error: response.statusText }));
-    throw new Error(errData.error?.message || errData.error || `HTTP ${response.status}`);
+    // 优先抛出上游的详细错误
+    const msg = errData.error?.message || errData.error || `HTTP ${response.status}`;
+    throw new Error(msg);
   }
 
   const contentType = response.headers.get('content-type') || '';
@@ -142,12 +136,11 @@ const openAIFetch = async (
       }
 
       if (hasError) throw new Error(lastErrorMessage || "流式传输中断");
-      if (!fullContent) throw new Error("模型响应为空，可能被安全策略拦截。");
+      if (!fullContent) throw new Error("模型返回内容为空。");
       return fullContent;
   } 
   
   const result = await response.json();
-  // 某些接口直接返回结果，某些包裹在 choices 中
   return result.choices?.[0]?.message?.content || result;
 };
 
@@ -182,19 +175,26 @@ export const generateDailyDigest = async (config: AppConfig, onLog: (msg: string
   const todayStr = new Date().toISOString().split('T')[0];
   onLog(`[第一步] 正在请求模型发现资讯链接...`);
   
-  const discoveryPrompt = `请提供 ${todayStr} 发生的全球 10 条社会热点和 10 条健康资讯。必须包含真实的原始 URL，严禁捏造。仅输出 JSON 格式：{"candidates": [{"title": "标题", "url": "URL", "category": "social"}]}`;
+  // 优化 Prompt：减少激进词汇，强调 JSON 格式
+  const discoveryPrompt = `
+    Role: News Editor. Date: ${todayStr}.
+    Task: Search for 10 global news and 10 health updates.
+    Requirements:
+    1. Provide REAL deep-links (not homepage).
+    2. Format as JSON ONLY: {"candidates": [{"title": "News Title", "url": "https://...", "category": "social"}]}
+  `;
 
   const discoveryRaw = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', {
     model: config.model,
     messages: [{ role: "user", content: discoveryPrompt }],
     stream: true,
-    max_tokens: 4000,
+    max_tokens: 2000,
     temperature: 0.3
   });
 
   const discoveryData = extractJson(discoveryRaw);
   const candidates = (discoveryData.candidates || []) as { title: string, url: string, category: string }[];
-  if (candidates.length === 0) throw new Error("未找到资讯链接。");
+  if (candidates.length === 0) throw new Error("未找到有效资讯列表。");
 
   onLog(`[检查点] 正在验证 ${candidates.length} 条链接...`);
   const validatedItems: { title: string, url: string, category: string }[] = [];
@@ -204,17 +204,21 @@ export const generateDailyDigest = async (config: AppConfig, onLog: (msg: string
   }));
   results.forEach(r => { if(r) validatedItems.push(r); });
 
-  if (validatedItems.length === 0) throw new Error("链接验证全部失败。");
-  onLog(`成功验证 ${validatedItems.length} 条链接。`);
+  if (validatedItems.length === 0) throw new Error("AI 提供的链接均为无效或无法访问。");
+  onLog(`成功验证 ${validatedItems.length} 条有效链接。`);
 
   onLog(`[第二步] 正在生成日报精编...`);
-  const elaborationPrompt = `根据以下源链接编写日报，包含 summary_cn (150字), summary_en, ai_score, xhs_titles。源：${validatedItems.map(v => v.url).join(',')}`;
+  const elaborationPrompt = `
+    Analyze these links and create a report with summary_cn (150 chars), summary_en, ai_score, and xhs_titles.
+    Links: ${validatedItems.map(v => v.url).join(', ')}
+    Format: JSON.
+  `;
 
   const elaborationRaw = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', {
     model: config.model,
     messages: [{ role: "user", content: elaborationPrompt }],
     stream: true,
-    max_tokens: 6000,
+    max_tokens: 4000,
     temperature: 0.6
   });
 

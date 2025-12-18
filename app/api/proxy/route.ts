@@ -33,28 +33,40 @@ export async function POST(req: Request) {
     const normalizedMethod = (method || 'GET').toUpperCase();
     const isStreamRequest = normalizedMethod === 'POST' && body?.stream === true;
     
-    // 规范检查：GET/HEAD 请求严禁携带 body
     const finalBody = (normalizedMethod === 'GET' || normalizedMethod === 'HEAD') 
       ? undefined 
       : (body ? JSON.stringify(body) : undefined);
 
     if (!isStreamRequest) {
-      const simpleRes = await fetch(targetUrl, {
+      const upstreamRes = await fetch(targetUrl, {
         method: normalizedMethod,
         headers: headers || {},
         body: finalBody,
       });
 
-      const resBody = await simpleRes.arrayBuffer();
-      const resHeaders = new Headers(simpleRes.headers);
+      // 关键改进：如果上游报错，把上游的报错内容透传给前端
+      if (!upstreamRes.ok) {
+          const errorText = await upstreamRes.text();
+          let errorJson;
+          try {
+              errorJson = JSON.parse(errorText);
+          } catch {
+              errorJson = { error: errorText };
+          }
+          return NextResponse.json(errorJson, { status: upstreamRes.status });
+      }
+
+      const resBody = await upstreamRes.arrayBuffer();
+      const resHeaders = new Headers(upstreamRes.headers);
       resHeaders.set('Access-Control-Allow-Origin', '*');
 
       return new Response(resBody, {
-        status: simpleRes.status,
+        status: upstreamRes.status,
         headers: resHeaders
       });
     }
 
+    // 处理流式请求
     const stream = new ReadableStream({
       async start(controller) {
         const encoder = new TextEncoder();
@@ -68,7 +80,7 @@ export async function POST(req: Request) {
 
           if (!upstreamRes.ok) {
             const errText = await upstreamRes.text();
-            controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ error: errText })}\n\n`));
+            controller.enqueue(encoder.encode(`event: error\ndata: ${errText}\n\n`));
             controller.close();
             return;
           }
