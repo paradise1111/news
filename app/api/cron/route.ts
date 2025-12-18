@@ -7,26 +7,42 @@ export const dynamic = 'force-dynamic';
 
 const generateId = () => Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 
-// --- SATURATED EMAIL STYLE ---
+// --- SATURATED EMAIL STYLE (Inline CSS for Compatibility) ---
+// Note: Email clients usually strip <link> tags, so we use system fonts that look similar to Noto Serif/Poppins
 const EMAIL_STYLES = {
   body: "background-color: #f1f5f9; margin: 0; padding: 0; -webkit-font-smoothing: antialiased;",
   container: "width: 100%; max-width: 600px; margin: 0 auto; background-color: #f1f5f9; padding-bottom: 40px;",
+  
+  // Hero
   header: "background-color: #312e81; color: #ffffff; padding: 40px 20px; text-align: center;",
   headerTag: "display: inline-block; border: 1px solid #818cf8; padding: 2px 8px; font-family: sans-serif; font-size: 10px; letter-spacing: 2px; color: #c7d2fe; margin-bottom: 10px;",
   headerTitle: "font-family: 'Times New Roman', serif; font-size: 42px; font-weight: 900; margin: 0; letter-spacing: -1px; line-height: 1;",
   headerMeta: "font-family: sans-serif; color: #a5b4fc; font-size: 10px; margin-top: 10px; letter-spacing: 2px; text-transform: uppercase;",
+  
+  // Section
   sectionTitle: "background-color: #1e293b; color: #ffffff; padding: 15px; font-family: sans-serif; font-size: 18px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-top: 30px; margin-bottom: 20px; text-align: center;",
+  
+  // Card
   card: "background-color: #ffffff; border-bottom: 4px solid #312e81; padding: 25px; margin-bottom: 20px;",
+  
+  // Meta Row
   metaRow: "margin-bottom: 15px;",
   scoreBadge: "background-color: #312e81; color: #ffffff; font-family: monospace; font-size: 14px; font-weight: bold; padding: 4px 8px; display: inline-block;",
   scoreReason: "font-family: serif; color: #312e81; font-weight: bold; font-size: 12px; border: 1px solid #312e81; padding: 3px 6px; display: inline-block; margin-left: 5px;",
+  
+  // Typography
   title: "font-family: 'Times New Roman', serif; font-size: 24px; font-weight: 900; line-height: 1.2; color: #0f172a; margin: 0 0 10px 0;",
+  
+  // XHS Box
   xhsBox: "background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 15px; margin: 15px 0;",
   xhsHeader: "color: #b91c1c; font-family: sans-serif; font-weight: bold; font-size: 10px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px;",
   xhsItem: "font-family: serif; font-weight: bold; font-size: 16px; color: #7f1d1d; display: block; margin-bottom: 5px;",
+  
   summaryCn: "font-family: 'Times New Roman', serif; font-size: 16px; line-height: 1.6; color: #1e293b; font-weight: bold; margin-bottom: 8px; display: block; border-left: 2px solid #e2e8f0; padding-left: 10px;",
   summaryEn: "font-family: sans-serif; font-size: 12px; line-height: 1.5; color: #64748b; font-style: italic; display: block; padding-left: 10px; margin-bottom: 20px;",
+  
   linkBtn: "background-color: #0f172a; color: #ffffff !important; text-decoration: none; padding: 10px 20px; font-family: sans-serif; font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; display: inline-block;",
+  
   footer: "padding: 40px 20px; text-align: center; font-family: sans-serif; font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 2px;"
 };
 
@@ -175,22 +191,21 @@ async function runDigestJob() {
     // 1. GENERATE CONTENT
     const today = new Date();
     const yesterday = new Date(today);
-    yesterday.setDate(today.getDate() - 2); // Look back 48 hours
+    yesterday.setDate(today.getDate() - 1);
     
     const todayStr = today.toISOString().split('T')[0];
     const targetDateStr = yesterday.toISOString().split('T')[0];
 
-    // UPDATED PROMPT FOR CRON (Matches Service with URL Fallback)
+    // UPDATED PROMPT FOR CRON (Matches Service with URL Validation)
     const prompt = `
       You are the Hajimi Daily Editor. 
-      Today: ${todayStr}. News Window: Since ${targetDateStr}.
+      Today: ${todayStr}. Target News Date: ${targetDateStr}.
       
-      CRITICAL: LINKS MUST WORK.
-      1. **Preferred**: Use specific article URLs from Google Search results.
-      2. **Fallback**: If you can't find a deep link, use a Google Search Query URL: "https://www.google.com/search?q=" + Title.
-      3. **Forbidden**: Do NOT invent paths like "cnn.com/2024/05/20/random-slug" which result in 404s.
-      
-      Generate **8-12 items** per section.
+      CRITICAL VALIDATION (ZERO TOLERANCE): 
+      1. **NO FAKE LINKS**: You must use the EXACT URL from the Google Search tool. Do not guess/invent URLs.
+      2. **DEEP LINKS ONLY**: Reject "cnn.com" (homepages). Must be article-specific (e.g. cnn.com/2024/05/...).
+      3. **SKIP IF UNSURE**: If the search tool doesn't give a working deep link, DO NOT INCLUDE THE ITEM.
+      4. IGNORE news older than ${targetDateStr}.
       
       Output JSON: { "social": [{"title":..., "source_url":"...", "ai_score":..., "ai_score_reason":"...", "summary_cn":"...", ...}], "health": [ {"xhs_titles":["..."], ...} ] }
     `;
