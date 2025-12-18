@@ -25,7 +25,6 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
   
   const listRef = useRef<HTMLDivElement>(null);
 
-  // Load saved config on mount
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
@@ -50,7 +49,6 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
     setError(null);
 
     try {
-      // 尝试从后台拉取真实模型列表
       const models = await verifyAndFetchModels(apiKey, baseUrl);
       
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ apiKey, baseUrl }));
@@ -60,17 +58,17 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
         setModel(models[0].id);
         setStep('model');
       } else {
-        // 如果拉取为空，可能是连接问题
-        setError("无法从该 API 地址获取模型列表。请检查 Base URL 是否正确（需包含 /v1）或 API Key 是否有效。");
-        // 允许降级到默认列表，但给出警告
+        setError("API 连接成功但未返回任何模型。请检查后台是否有模型权限。");
         setAvailableModels(DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption)));
         setModel(DEFAULT_MODELS[0].id);
         setStep('model');
       }
     } catch (err: any) {
       console.warn("Connection error:", err);
-      setError(`连接失败: ${err.message || '未知错误'}`);
-      // 自动降级以便调试
+      // 展示真实错误：例如 "Invalid API Key" 或 "404 Not Found"
+      setError(`连接失败: ${err.message || '未知网络错误'}`);
+      
+      // 仍然允许进入下一步，方便用户手动指定模型调试
       setAvailableModels(DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption)));
       setModel(DEFAULT_MODELS[0].id);
       setStep('model');
@@ -90,7 +88,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
     if (result.available) {
       setTestResult(`连接成功! 延迟: ${result.latency}ms`);
     } else {
-      setError(`连接失败: ${result.error}`);
+      setError(`模型不可用: ${result.error}`);
     }
     setIsTesting(false);
   };
@@ -136,16 +134,16 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
     
     setIsTesting(false);
     if (successCount === 0) {
-        setError("所有模型均不可用。请检查后台权限或网络连接。");
+        setError("扫描完成：所有模型均无法连接，请确认 API Key 是否有权限或 Base URL 正确。");
     } else {
-        setTestResult(`测试完成。共发现 ${successCount} 个可用模型。`);
+        setTestResult(`扫描完成：发现 ${successCount} 个可用模型。`);
     }
   };
 
   const handleStart = (e: React.FormEvent) => {
     e.preventDefault();
     if (!model) {
-      setError("Please select a model.");
+      setError("请选择一个模型。");
       return;
     }
     onConfigConfirmed({ apiKey, baseUrl, model });
@@ -156,7 +154,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
       <div className="text-center mb-6 shrink-0">
         <h2 className="text-2xl font-bold text-gray-800">Daily Pulse Setup</h2>
         <p className="text-gray-500 text-sm mt-2">
-          {step === 'credentials' ? '配置 API 令牌 (兼容 New API / OpenAI)' : '选择已连接后台的模型'}
+          {step === 'credentials' ? '配置 API 令牌 (兼容 OneAPI / OpenAI / New API)' : '选择可用的模型'}
         </p>
       </div>
 
@@ -179,11 +177,11 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
               type="text"
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="例如: https://oneapi.site/v1"
+              placeholder="例如: https://api.domain.com/v1"
               className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
             />
             <div className="text-xs text-gray-500 mt-2 bg-gray-50 p-3 rounded border border-gray-200 leading-relaxed">
-              <strong>💡 提示：</strong> 正在使用 New API 模式。系统会自动补全 <code>/v1</code>。如果是 OpenAI 格式代理，请确保填写的地址能访问到 <code>/models</code> 接口。
+              <strong>💡 提示：</strong> 系统会自动处理 <code>/v1</code>。请确保你的 API 支持 <code>/v1/models</code> 标准接口。
             </div>
           </div>
 
@@ -199,7 +197,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
             className={`w-full py-3 rounded-lg text-white font-semibold shadow-md transition-all 
               ${isValidating ? 'bg-blue-400 cursor-wait' : 'bg-blue-600 hover:bg-blue-700 active:scale-95'}`}
           >
-            {isValidating ? '正在获取后台模型列表...' : '连接并获取模型'}
+            {isValidating ? '正在建立连接...' : '连接并获取模型'}
           </button>
         </form>
       ) : (
@@ -231,8 +229,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
           </div>
           
           <div className="flex items-center justify-between shrink-0">
-             <span className="text-xs text-indigo-600 font-bold">
-               {availableModels.length} 个后台模型就绪
+             <span className="text-xs text-indigo-600 font-bold uppercase tracking-wider">
+               发现 {availableModels.length} 个模型
              </span>
              <button 
                 type="button"
@@ -240,7 +238,7 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
                 disabled={isTesting}
                 className="text-xs px-3 py-1 rounded-full border bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-all"
               >
-                {isTesting ? '扫描中...' : '🔍 全量扫描'}
+                {isTesting ? '正在验证...' : '🔍 一键测速'}
               </button>
           </div>
 
@@ -259,8 +257,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
                         </div>
                         <div className="flex items-center gap-2 shrink-0 pl-2">
                             {m.status === 'testing' && <span className="animate-spin w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full"></span>}
-                            {m.status === 'available' && <span className="text-green-600 font-bold">OK {m.latency}ms</span>}
-                            {m.status === 'unavailable' && <span className="text-red-500">FAIL</span>}
+                            {m.status === 'available' && <span className="text-green-600 font-bold">{m.latency}ms</span>}
+                            {m.status === 'unavailable' && <span className="text-red-500">不可用</span>}
                         </div>
                     </div>
                 ))}
@@ -271,8 +269,8 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({ onConfigConfirmed, status }) 
             {error && <div className="p-3 bg-red-50 text-red-700 border border-red-200 text-xs rounded-lg">{error}</div>}
 
             <div className="flex gap-3 pt-2">
-                <button type="button" onClick={() => setStep('credentials')} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-lg transition-colors">返回</button>
-                <button type="button" onClick={handleStart} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition-all active:scale-95">启动任务</button>
+                <button type="button" onClick={() => setStep('credentials')} className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-lg transition-colors">修改配置</button>
+                <button type="button" onClick={handleStart} className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-md transition-all active:scale-95">进入日报系统</button>
             </div>
           </div>
         </div>
