@@ -209,66 +209,57 @@ export const generateDailyDigest = async (
 
   const today = new Date();
   const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 1);
+  yesterday.setDate(today.getDate() - 2); // Look back 48 hours to ensure content
   
-  // Format: YYYY-MM-DD
   const todayStr = today.toISOString().split('T')[0];
   const targetDateStr = yesterday.toISOString().split('T')[0];
-  const targetDateHuman = yesterday.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
   onLog(`当前日期: ${todayStr}`);
-  onLog(`目标新闻日期: ${targetDateStr} (${targetDateHuman})`);
+  onLog(`搜索新闻范围: ${targetDateStr} 至今`);
 
-  // UPGRADED PROMPT: Zero Tolerance for Broken Links
+  // UPGRADED PROMPT: Strict Links & Quantity
   const prompt = `
-    You are an automated Daily Information Digest agent.
+    You are the Hajimi Daily Editor.
     
-    ### TIME CONTEXT (ABSOLUTE)
-    - **Current Date**: ${todayStr}
-    - **TARGET DATE**: ${targetDateStr}
-    - **RULE**: IGNORE sources older than ${targetDateStr}.
+    ### TASK
+    Generate a daily digest for TODAY (${todayStr}).
+    Search for **HIGH-IMPACT** and **TRENDING** events from the last 48 hours.
     
-    ### ANTI-HALLUCINATION PROTOCOL (ZERO TOLERANCE)
-    1. **NO GUESSING**: Do NOT construct URLs (e.g., do not invent "cnn.com/2024/...").
-    2. **VERBATIM ONLY**: You MUST use the *exact* URL returned by the Google Search tool.
-    3. **VERIFY**: Check the link before adding it. If the search result is just "www.cnn.com" (Home Page), **DISCARD THE ITEM ENTIRELY**.
-    4. **BETTER EMPTY THAN FAKE**: It is better to return 5 verified items with working deep links than 10 items with 404 links.
-    5. **DEEP LINKS**: URLs must end in an article slug or ID (e.g., .html, /article/..., /news/...).
-
-    ### INSTRUCTIONS
-    1. **Language**: 
-       - 'ai_score_reason': Chinese.
-       - 'summary_cn': Detailed Chinese (80-120 words).
-       - 'summary_en': Concise English.
+    ### QUANTITY
+    - **Social/Global**: EXACTLY 6 to 10 items.
+    - **Health/Life**: EXACTLY 6 to 10 items.
     
-    2. **XHS Strategy (Health/Life)**:
-       - 'xhs_titles': Array of 3 viral/clickbait titles.
-       - Tone: "Emotional", "Urgent", "Revealing".
+    ### LINK INTEGRITY PROTOCOL (STRICT)
+    **Objective**: The user must be able to click the link and see the article. NO 404s.
     
-    3. **Scoring**: Range 60-99.
+    1. **COPY-PASTE ONLY**: You MUST use the exact URL provided by the Google Search tool citations.
+    2. **NO GUESSING**: Do NOT try to construct URLs based on date/title patterns. They will fail.
+    3. **FALLBACK SAFETY**: If the search tool does not provide a direct, deep link to an article, you **MUST** use the Google Search Query URL instead.
+       - Example: "https://www.google.com/search?q=SpaceX+Launch+Success"
+       - **Reasoning**: A working Google Search link is better than a broken "direct" link.
     
-    ### TASKS
-    **Task 1: Social/Trends** (Find 5-10 VERIFIED items)
-    **Task 2: Health/Life** (Find 5-10 VERIFIED items)
+    ### CONTENT REQUIREMENTS
+    - **Hot Topics**: Only include news that has significant attention or viral potential.
+    - **Health**: Viral health tips, new studies, or lifestyle trends.
 
     ### OUTPUT FORMAT (JSON ONLY)
     {
       "social": [
         { 
-          "title": "...", 
-          "summary_en": "...", 
-          "summary_cn": "...", 
-          "source_url": "https://actual-verified-link...", 
-          "source_name": "...", 
-          "ai_score": 88, 
-          "ai_score_reason": "...", 
-          "tags": ["Tag1"] 
+          "title": "Title Here", 
+          "summary_en": "Short English summary.", 
+          "summary_cn": "Detailed Chinese summary (80 words).", 
+          "source_url": "https://...", 
+          "source_name": "CNN / Google Search", 
+          "ai_score": 95, 
+          "ai_score_reason": "High impact global event", 
+          "tags": ["Tech", "Space"] 
         }
       ],
       "health": [
         {
           ...,
-          "xhs_titles": ["🔥Title 1", "Title 2", "Title 3"]
+          "xhs_titles": ["🔥Viral Title 1", "Title 2", "Title 3"]
         }
       ]
     }
@@ -279,7 +270,7 @@ export const generateDailyDigest = async (
     messages: [
       { 
           role: "system", 
-          content: "You are a professional editor. You have ZERO TOLERANCE for fake or broken links. If you cannot find a specific deep link for a story in the search tools, you MUST SKIP that story. Do not invent URLs." 
+          content: "You are a helpful news assistant. You prioritize WORKING LINKS. You never invent URLs. If a specific URL is not available in the tool output, you fallback to a Google Search result page URL." 
       },
       { 
           role: "user", 
@@ -287,7 +278,7 @@ export const generateDailyDigest = async (
       }
     ],
     stream: true,
-    max_tokens: 8192, // Increased to prevent truncated JSON
+    max_tokens: 8192,
     tools: [
         { googleSearch: {} }
     ],
@@ -304,7 +295,7 @@ export const generateDailyDigest = async (
     let responseData;
     
     try {
-        onLog("发送请求中 (严格链接审查模式)...");
+        onLog("正在搜索热点新闻 (严控链接质量)...");
         responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
 
     } catch(err: any) {
