@@ -2,18 +2,60 @@
 import { AppConfig, DigestData, ModelOption } from "../types";
 import { DEFAULT_MODELS } from "../constants";
 
-// Helper: Normalize Base URL to ensure it ends with /v1 convention if missing
+// 更加灵活的 URL 处理：不强制补全，仅在必要时纠正
 const normalizeBaseUrl = (url: string): string => {
   let cleaned = url.trim().replace(/\/+$/, '');
-  
-  if (!cleaned.endsWith('/v1')) {
-      console.log(`[Auto-Fix] Appending /v1 to Base URL: ${cleaned} -> ${cleaned}/v1`);
-      return `${cleaned}/v1`;
+  if (!cleaned) return '';
+  // 如果用户已经写了 /v1 或以其结尾，则保持原样
+  if (cleaned.endsWith('/v1') || cleaned.includes('/v1/')) {
+    return cleaned;
+  }
+  // 如果是一个纯域名，尝试补全 /v1
+  if (!cleaned.includes('/')) {
+    return `${cleaned}/v1`;
   }
   return cleaned;
 };
 
-// Generic Fetcher for OpenAI-Compatible APIs via Universal Edge Proxy
+/**
+ * 极强容错的 JSON 提取器
+ */
+const extractJson = (str: string): any => {
+    if (typeof str !== 'string') return str;
+    const text = str.trim();
+    if (!text) throw new Error("AI 返回了空内容。");
+
+    // 1. 尝试直接解析
+    try { return JSON.parse(text); } catch (e) {}
+
+    // 2. 清理 Markdown 代码块
+    let cleaned = text
+        .replace(/^[\s\S]*?```json/g, '')
+        .replace(/```[\s\S]*?$/g, '')
+        .trim();
+    
+    try { return JSON.parse(cleaned); } catch (e) {}
+
+    // 3. 寻找最后的 {} 结构
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    
+    if (start !== -1 && end !== -1 && end > start) {
+        const potentialJson = text.substring(start, end + 1);
+        try {
+            return JSON.parse(potentialJson);
+        } catch (e) {
+            // 尝试修复常见 JSON 错误（如末尾逗号）
+            const sanitized = potentialJson
+                .replace(/,\s*([\]}])/g, '$1')
+                .replace(/[\u0000-\u001F\u007F-\u009F]/g, "");
+            try { return JSON.parse(sanitized); } catch (e2) {}
+        }
+    }
+    
+    throw new Error(`无法从输出中提取有效的 JSON 数据。内容摘要: ${text.substring(0, 100)}`);
+};
+
 const openAIFetch = async (
   baseUrl: string,
   apiKey: string,
@@ -22,55 +64,40 @@ const openAIFetch = async (
   method: string = 'POST'
 ) => {
   const normalizedBase = normalizeBaseUrl(baseUrl);
-  const targetUrl = `${normalizedBase}${endpoint}`;
+  const targetUrl = endpoint.startsWith('http') ? endpoint : `${normalizedBase}${endpoint}`;
 
-  console.log(`[Proxy Request] -> ${method} ${targetUrl}`);
-
-  // 180秒客户端超时
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 180000); 
 
   try {
     const response = await fetch('/api/proxy', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
       body: JSON.stringify({
-        targetUrl: targetUrl,
+        targetUrl,
         method,
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiKey}`
         },
-        body: body 
+        body 
       }),
     });
 
     clearTimeout(timeoutId);
 
-    if (!response.ok) {
-       const errorText = await response.text();
-       let errorJson;
-       try { errorJson = JSON.parse(errorText); } catch { errorJson = { error: errorText || response.statusText }; }
-       
-       const rawError = errorJson.error || errorJson;
-       const errorDetail = typeof rawError === 'string' ? rawError : JSON.stringify(rawError);
-
-       throw new Error(`Proxy Error (${response.status}): ${errorDetail}`);
-    }
-
+    // 处理流式响应
     const contentType = response.headers.get('content-type');
     if (contentType && contentType.includes('text/event-stream')) {
         const reader = response.body?.getReader();
-        if (!reader) throw new Error("ReadableStream not supported");
+        if (!reader) throw new Error("代理不支持流式传输");
         
         const decoder = new TextDecoder();
         let buffer = '';
-        let finalJsonString = '';
+        let fullContent = '';
         let hasError = false;
-        let errorMessage = '';
+        let streamErrorMessage = '';
 
         while (true) {
             const { done, value } = await reader.read();
@@ -81,102 +108,73 @@ const openAIFetch = async (
             buffer = lines.pop() || '';
 
             for (const line of lines) {
-                const trimmedLine = line.trim();
-                if (!trimmedLine) continue;
-                if (trimmedLine.startsWith(':')) continue;
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.startsWith(':')) continue;
 
-                if (trimmedLine.startsWith('event: error')) {
+                if (trimmed.startsWith('event: error')) {
                     hasError = true;
-                } else if (trimmedLine.startsWith('data: ')) {
-                    const dataContent = trimmedLine.substring(6);
-                    if (dataContent === '[DONE]') continue;
+                } else if (trimmed.startsWith('data: ')) {
+                    const dataStr = trimmed.substring(6);
+                    if (dataStr === '[DONE]') continue;
                     
-                    if (hasError) {
-                        try {
-                            const errObj = JSON.parse(dataContent);
-                            const rawErr = errObj.error || errObj.message || errObj;
-                            errorMessage = typeof rawErr === 'string' ? rawErr : JSON.stringify(rawErr);
-                        } catch {
-                            errorMessage = dataContent;
+                    try {
+                        const parsed = JSON.parse(dataStr);
+                        if (hasError) {
+                            streamErrorMessage = parsed.error?.message || streamErrorMessage || dataStr;
+                        } else {
+                            // 兼容多种 OpenAI 流格式
+                            const content = parsed.choices?.[0]?.delta?.content || 
+                                           parsed.choices?.[0]?.text || 
+                                           (typeof parsed === 'string' ? parsed : '');
+                            fullContent += content;
                         }
-                    } else {
-                        try {
-                            const parsed = JSON.parse(dataContent);
-                            if (parsed.choices?.[0]?.delta?.content) {
-                                finalJsonString += parsed.choices[0].delta.content;
-                            } else if (parsed.choices?.[0]?.text) {
-                                finalJsonString += parsed.choices[0].text;
-                            } else if (typeof parsed === 'string') {
-                                finalJsonString += parsed; 
-                            } else if (parsed.choices?.[0]?.message?.content) {
-                                finalJsonString = parsed.choices[0].message.content;
-                            }
-                        } catch (e) { }
+                    } catch (e) {
+                        if (!hasError) fullContent += dataStr;
                     }
                 }
             }
         }
 
-        if (hasError || errorMessage) {
-            throw new Error(errorMessage || "Stream Error (Unknown)");
-        }
-        
-        if (!finalJsonString || !finalJsonString.trim()) {
-            throw new Error("Stream finished but content is empty.");
-        }
-
-        // --- JSON CLEANING LOGIC ---
-        // 1. Remove Markdown code blocks (```json ... ```)
-        let cleanRaw = finalJsonString
-            .replace(/```json/g, '')
-            .replace(/```/g, '')
-            .trim();
-
-        try {
-            return JSON.parse(cleanRaw);
-        } catch (e) {
-            // 2. Fallback: Find first '{' and last '}'
-            const firstBrace = cleanRaw.indexOf('{');
-            const lastBrace = cleanRaw.lastIndexOf('}');
-            
-            if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-                const extracted = cleanRaw.substring(firstBrace, lastBrace + 1);
-                try {
-                    return JSON.parse(extracted);
-                } catch (e2) {
-                     console.error("Failed to parse extracted JSON block:", e2);
-                }
-            }
-            console.error("Invalid JSON String:", finalJsonString.substring(0, 200) + "...");
-            throw new Error("API response was not valid JSON. (Parsing Failed)");
-        }
+        if (hasError) throw new Error(streamErrorMessage || "流式连接中途报错");
+        return fullContent;
     } 
     
-    return await response.json();
+    // 处理普通 JSON 响应
+    const result = await response.json();
+    
+    // 关键：检查代理商返回的“伪 200”错误
+    if (result.error) {
+        const msg = result.error.message || result.error.type || JSON.stringify(result.error);
+        throw new Error(`[API Error] ${msg}`);
+    }
+
+    if (!response.ok) {
+        throw new Error(`HTTP 异常 (${response.status})`);
+    }
+
+    return result;
 
   } catch (error: any) {
       clearTimeout(timeoutId);
-      if (error.name === 'AbortError') {
-          throw new Error("请求超时。任务耗时过长，建议减少生成内容数量。");
-      }
+      if (error.name === 'AbortError') throw new Error("请求超时，请尝试更换模型或简化要求。");
       throw error;
   }
 };
 
-export const checkModelAvailability = async (
-  apiKey: string, 
-  baseUrl: string, 
-  modelId: string
-): Promise<{ available: boolean; latency?: number; error?: string }> => {
+export const checkModelAvailability = async (apiKey: string, baseUrl: string, modelId: string) => {
   const start = Date.now();
   try {
-    await openAIFetch(baseUrl, apiKey, '/chat/completions', {
+    const res = await openAIFetch(baseUrl, apiKey, '/chat/completions', {
       model: modelId,
-      messages: [{ role: "user", content: "Hi" }],
+      messages: [{ role: "user", content: "ping" }],
       max_tokens: 5,
       stream: false
     });
-    return { available: true, latency: Date.now() - start };
+    // 简单校验响应合法性
+    if (res.choices || res.id || res.object === 'chat.completion') {
+        return { available: true, latency: Date.now() - start };
+    }
+    throw new Error("响应格式不符合 OpenAI 标准");
   } catch (error: any) {
     return { available: false, error: error.message };
   }
@@ -184,16 +182,9 @@ export const checkModelAvailability = async (
 
 export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Promise<ModelOption[]> => {
   try {
-    console.log("Fetching models list from OpenAI-compatible endpoint...");
     const data = await openAIFetch(baseUrl, apiKey, '/models', undefined, 'GET');
-    
     if (data && Array.isArray(data.data)) {
-        const models = data.data.map((m: any) => ({
-            id: m.id,
-            name: m.id,
-            status: 'unknown'
-        }));
-        return models.length > 0 ? models : DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption));
+        return data.data.map((m: any) => ({ id: m.id, name: m.id, status: 'unknown' }));
     }
     return DEFAULT_MODELS.map(m => ({ ...m, status: 'unknown' } as ModelOption));
   } catch (e: any) {
@@ -201,138 +192,59 @@ export const verifyAndFetchModels = async (apiKey: string, baseUrl: string): Pro
   }
 };
 
-export const generateDailyDigest = async (
-  config: AppConfig, 
-  onLog: (msg: string) => void
-): Promise<DigestData> => {
-  onLog(`正在初始化 (API 模式: OpenAI 兼容流式, 模型: ${config.model})...`);
+export const generateDailyDigest = async (config: AppConfig, onLog: (msg: string) => void): Promise<DigestData> => {
+  onLog(`正在启动任务 (模型: ${config.model})...`);
 
-  const today = new Date();
-  const yesterday = new Date(today);
-  yesterday.setDate(today.getDate() - 2); // Look back 48 hours to ensure content
-  
-  const todayStr = today.toISOString().split('T')[0];
-  const targetDateStr = yesterday.toISOString().split('T')[0];
+  // 针对自定义模型别名或特定中转，禁用可能导致 400 错误的参数
+  const isCustomModel = config.model.includes('花之悦') || 
+                        config.model.includes('tavo') || 
+                        /[\u4e00-\u9fa5]/.test(config.model);
 
-  onLog(`当前日期: ${todayStr}`);
-  onLog(`搜索新闻范围: ${targetDateStr} 至今`);
-
-  // UPGRADED PROMPT: Safe Links Strategy
+  const todayStr = new Date().toISOString().split('T')[0];
   const prompt = `
-    You are the Hajimi Daily Editor.
-    
-    ### TASK
-    Generate a daily digest for TODAY (${todayStr}).
-    Search for high-impact events from the last 48 hours.
-    
-    ### LINK SAFETY PROTOCOL (CRITICAL)
-    Users hate 404 errors. You must ensure every link works.
-    
-    **Rule 1**: Try to find the exact article URL from the Google Search results.
-    **Rule 2**: If you find a great story but CANNOT find the deep link (e.g., article slug), you MUST use a **Google Search URL** as the \`source_url\`.
-       - Example: "https://www.google.com/search?q=SpaceX+Starship+Launch+Success"
-    **Rule 3**: NEVER invent a URL path (e.g., do not make up "cnn.com/2024/05/22/story"). Invented paths are always 404s.
-    **Rule 4**: It is better to have a Google Search link than a broken direct link.
-
-    ### CONTENT REQUIREMENTS
-    - **Quantity**: I need **8-12 items** for "social" and **8-12 items** for "health".
-    - **Health/Life**: Focus on viral health tips, lifestyle hacks, or medical breakthroughs.
-    - **Social/Trends**: Focus on global major events, tech news, or viral internet culture.
-
-    ### OUTPUT FORMAT (JSON ONLY)
-    {
-      "social": [
-        { 
-          "title": "Title Here", 
-          "summary_en": "Short English summary.", 
-          "summary_cn": "Detailed Chinese summary (80 words).", 
-          "source_url": "https://...", 
-          "source_name": "CNN / Google Search", 
-          "ai_score": 95, 
-          "ai_score_reason": "High impact global event", 
-          "tags": ["Tech", "Space"] 
-        }
-      ],
-      "health": [
-        {
-          ...,
-          "xhs_titles": ["🔥Viral Title 1", "Title 2", "Title 3"]
-        }
-      ]
-    }
+    Generate a JSON news digest for ${todayStr}.
+    Requirements:
+    - 6-10 items for "social" and 6-10 items for "health".
+    - Output MUST be raw JSON.
+    - NO Markdown code blocks (\`\`\`json).
+    - NO conversational text before or after JSON.
+    Format: {"social":[{"title":..., "summary_cn":..., "source_url":...}], "health":[...]}
   `;
 
   const payload: any = {
     model: config.model,
     messages: [
-      { 
-          role: "system", 
-          content: "You are a helpful news assistant. You prioritize WORKING LINKS. If you don't have a direct link, fallback to a Google Search Query URL. Do not generate 404 links." 
-      },
-      { 
-          role: "user", 
-          content: prompt 
-      }
+        { role: "system", content: "You are a JSON API. Output raw JSON only. NO conversational text. NO Markdown blocks." },
+        { role: "user", content: prompt }
     ],
     stream: true,
-    max_tokens: 8192,
-    tools: [
-        { googleSearch: {} }
-    ],
-    response_format: { type: "json_object" }
+    max_tokens: 4000,
+    temperature: 0.7
   };
 
-  const isDeepSeek = config.model.toLowerCase().includes('deepseek');
-  if (isDeepSeek) {
-     console.log("DeepSeek model detected: Removing explicit Google Search tool definition.");
-     delete payload.tools;
+  // 仅在官方模型且不带中文字符的情况下尝试开启搜索
+  if (!isCustomModel) {
+      payload.tools = [{ googleSearch: {} }];
+      payload.response_format = { type: "json_object" };
+      onLog("启用 Google Search 增强内容...");
+  } else {
+      onLog("检测到自定义模型别名，已进入“兼容模式”（禁用搜索插件及强制 JSON 格式）...");
   }
 
   try {
-    let responseData;
+    onLog("正在生成日报内容...");
+    const rawContent = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
     
-    try {
-        onLog("正在搜索并生成 (优先保证链接可用)...");
-        responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
-
-    } catch(err: any) {
-        const errorMsg = (err.message || '').toLowerCase();
-        console.warn("First attempt failed:", errorMsg);
-
-        if (
-            errorMsg.includes("tool") || 
-            errorMsg.includes("googlesearch") || 
-            errorMsg.includes("response_format") || 
-            errorMsg.includes("bad_response_status_code") || 
-            errorMsg.includes("openai_error")
-        ) {
-             onLog(`自动降级重试中...`);
-             if (payload.tools) delete payload.tools;
-             if (payload.response_format) delete payload.response_format;
-             responseData = await openAIFetch(config.baseUrl, config.apiKey, '/chat/completions', payload);
-        } else {
-            throw err;
-        }
+    // openAIFetch 在流模式下会返回拼接好的全量字符串
+    const finalData = extractJson(rawContent);
+    
+    if (!finalData.social || !finalData.health) {
+        throw new Error("AI 返回数据结构不完整。");
     }
 
-    if (!responseData) throw new Error("API Response is null");
-
-    const data = responseData;
-    onLog("数据接收完毕，正在校验结构...");
-
-    if (!Array.isArray(data.social) && !Array.isArray(data.health)) {
-        const values = Object.values(data);
-        if (values.length > 0 && typeof values[0] === 'object') {
-             return values[0] as DigestData;
-        }
-        throw new Error("JSON structure invalid.");
-    }
-
-    return data as DigestData;
-
+    return finalData as DigestData;
   } catch (error: any) {
-    const errorMsg = typeof error.message === 'string' ? error.message : JSON.stringify(error);
-    onLog(`任务失败: ${errorMsg}`);
+    onLog(`任务失败: ${error.message}`);
     throw error;
   }
 };
